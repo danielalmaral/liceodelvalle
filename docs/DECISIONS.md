@@ -19,3 +19,15 @@ Las reglas configurables vivirán en `CONFIG`, no hardcodeadas en código Apps S
 ## ADR-005: Autoridad Humana
 
 El sistema podrá recomendar, pero la convocatoria final requerirá aprobación del entrenador.
+
+## ADR-006: CONFIG Fail-Closed
+
+Las claves runtime configurables deben resolverse desde `CONFIG`. Si una clave requerida falta, está duplicada, inactiva o no cumple su tipo, el sistema falla con errores canónicos en lugar de aplicar defaults ocultos.
+
+## ADR-007: Schema Sin Valores Runtime
+
+`ConfigSchema` documenta claves admitidas, grupos, tipos, obligatoriedad, unidades y validaciones estructurales. Los valores acordados viven en documentación o cargas explícitas, no como fallback productivo.
+
+## ADR-008: Snapshot Historico Futuro
+
+Las fases futuras que apliquen reglas de `CONFIG` a eventos históricos deberán conservar el valor aplicado en el momento del evento para evitar recálculos retroactivos no autorizados.

@@ -10,6 +10,8 @@ Fase actual: `LDV-PILOT-P0-BOOTSTRAP-01`
 
 P0 establece estructura, reglas de trabajo, documentación y validaciones iniciales. No implementa lógica funcional de convocatoria, asistencia, elegibilidad, rotación ni comunicaciones.
 
+P1 agrega la infraestructura canónica de configuración dinámica. `CONFIG` es la única fuente runtime para reglas operativas configurables; si una clave requerida falta, el sistema falla de forma explícita sin usar defaults ocultos.
+
 ## Comandos
 
 ```bash

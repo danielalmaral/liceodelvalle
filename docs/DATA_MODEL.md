@@ -20,3 +20,22 @@ P0 documenta las entidades previstas sin crear hojas reales.
 ## Nota
 
 La definición detallada de columnas, tipos, validaciones y reglas de integridad corresponde a fases posteriores autorizadas.
+
+## CONFIG
+
+`CONFIG` queda formalizada desde P1 con estas columnas:
+
+```text
+CONFIG_ID
+GRUPO
+CLAVE
+VALOR
+TIPO
+UNIDAD
+ACTIVO
+DESCRIPCION
+MODIFICADO_EN
+MODIFICADO_POR
+```
+
+La hoja no se crea contra un Spreadsheet real en P1. Sólo se define el contrato y una rutina idempotente de setup para uso futuro.
