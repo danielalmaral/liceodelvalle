@@ -87,6 +87,16 @@ function assertAppsScriptManifest() {
   }
 }
 
+function assertValidBranchName(branch) {
+  if (typeof branch !== 'string' || branch.trim() === '') {
+    throw new Error('Unexpected branch: detached HEAD or empty branch');
+  }
+
+  if (branch === 'HEAD') {
+    throw new Error('Unexpected branch: detached HEAD');
+  }
+}
+
 function assertRepoLock() {
   const topLevel = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: root, encoding: 'utf8' }).trim();
   const origin = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: root, encoding: 'utf8' }).trim();
@@ -103,9 +113,7 @@ function assertRepoLock() {
     throw new Error(`Unexpected origin: ${origin}`);
   }
 
-  if (branch !== 'main') {
-    throw new Error(`Unexpected branch: ${branch}`);
-  }
+  assertValidBranchName(branch);
 }
 
 function getScannableFiles() {
@@ -202,4 +210,10 @@ function main() {
   console.log('CONFIG_HARDCODED_RULES: 0');
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  assertValidBranchName
+};
