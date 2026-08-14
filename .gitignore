@@ -1,0 +1,16 @@
+.clasprc.json
+.clasp.json
+.clasp.dev.json
+.clasp.pilot.json
+
+.env
+.env.*
+client_secret*.json
+credentials*.json
+token*.json
+
+*.local.json
+
+node_modules/
+coverage/
+.DS_Store
