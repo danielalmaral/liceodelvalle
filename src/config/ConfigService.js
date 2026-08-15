@@ -1,17 +1,30 @@
-const {
-  CONFIG_SCHEMA,
-  CONFIG_TYPES
-} = require('./ConfigSchema');
-
 const CONFIG_SERVICE_ERRORS = {
   REQUIRED_KEY_MISSING: 'CONFIG_REQUIRED_KEY_MISSING',
   INVALID_TYPE: 'CONFIG_INVALID_TYPE',
   UNKNOWN_KEY: 'CONFIG_UNKNOWN_KEY',
-  SCHEMA_INVALID: 'CONFIG_SCHEMA_INVALID'
+  SCHEMA_INVALID: 'CONFIG_SCHEMA_INVALID',
+  DUPLICATE_KEY: 'CONFIG_DUPLICATE_KEY',
+  INACTIVE_KEY: 'CONFIG_INACTIVE_KEY'
 };
 
 function createConfigServiceError(code, detail) {
   return new Error(detail ? `${code}: ${detail}` : code);
+}
+
+function getRuntimeConfigSchema() {
+  if (typeof globalThis !== 'undefined' && Array.isArray(globalThis.CONFIG_SCHEMA)) {
+    return globalThis.CONFIG_SCHEMA;
+  }
+
+  throw createConfigServiceError(CONFIG_SERVICE_ERRORS.SCHEMA_INVALID, 'CONFIG_SCHEMA is required');
+}
+
+function getRuntimeConfigTypes() {
+  if (typeof globalThis !== 'undefined' && globalThis.CONFIG_TYPES) {
+    return globalThis.CONFIG_TYPES;
+  }
+
+  throw createConfigServiceError(CONFIG_SERVICE_ERRORS.SCHEMA_INVALID, 'CONFIG_TYPES is required');
 }
 
 function ensureRepository(configRepository) {
@@ -102,14 +115,15 @@ function convertValue(record, schema) {
   }
 
   let converted;
+  const configTypes = getRuntimeConfigTypes();
 
-  if (schema.type === CONFIG_TYPES.INTEGER) {
+  if (schema.type === configTypes.INTEGER) {
     converted = parseInteger(record.value, schema.key);
-  } else if (schema.type === CONFIG_TYPES.DECIMAL) {
+  } else if (schema.type === configTypes.DECIMAL) {
     converted = parseDecimal(record.value, schema.key);
-  } else if (schema.type === CONFIG_TYPES.BOOLEAN) {
+  } else if (schema.type === configTypes.BOOLEAN) {
     converted = normalizeBoolean(record.value, schema.key);
-  } else if (schema.type === CONFIG_TYPES.STRING || schema.type === CONFIG_TYPES.ENUM) {
+  } else if (schema.type === configTypes.STRING || schema.type === configTypes.ENUM) {
     converted = parseString(record.value, schema.key);
   } else {
     throw createConfigServiceError(CONFIG_SERVICE_ERRORS.SCHEMA_INVALID, schema.key);
@@ -124,9 +138,44 @@ function getRequiredKeys(schemaEntries) {
   return schemaEntries.filter((entry) => entry.required).map((entry) => entry.key);
 }
 
+function assertRecordIntegrity(record, schema, seenKeys, seenConfigIds) {
+  if (seenKeys.has(record.key)) {
+    throw createConfigServiceError(CONFIG_SERVICE_ERRORS.DUPLICATE_KEY, record.key);
+  }
+
+  seenKeys.add(record.key);
+
+  if (typeof record.configId !== 'string' || record.configId.trim() === '') {
+    throw createConfigServiceError(CONFIG_SERVICE_ERRORS.SCHEMA_INVALID, 'CONFIG_ID');
+  }
+
+  if (seenConfigIds.has(record.configId)) {
+    throw createConfigServiceError(CONFIG_SERVICE_ERRORS.SCHEMA_INVALID, `CONFIG_ID ${record.configId}`);
+  }
+
+  seenConfigIds.add(record.configId);
+
+  if (record.group !== schema.group) {
+    throw createConfigServiceError(CONFIG_SERVICE_ERRORS.SCHEMA_INVALID, schema.key);
+  }
+
+  if (record.type !== schema.type) {
+    throw createConfigServiceError(CONFIG_SERVICE_ERRORS.INVALID_TYPE, schema.key);
+  }
+
+  if (schema.unit && record.unit !== schema.unit) {
+    throw createConfigServiceError(CONFIG_SERVICE_ERRORS.SCHEMA_INVALID, schema.key);
+  }
+
+  if (schema.required && !record.active) {
+    throw createConfigServiceError(CONFIG_SERVICE_ERRORS.INACTIVE_KEY, schema.key);
+  }
+}
+
 function createConfigService(configRepository, options = {}) {
   ensureRepository(configRepository);
-  const schemaEntries = options.schema || CONFIG_SCHEMA;
+  const schemaEntries = options.schema || getRuntimeConfigSchema();
+  const configTypes = options.types || getRuntimeConfigTypes();
 
   function getTyped(key, expectedType) {
     const schema = assertKnownKey(schemaEntries, key);
@@ -140,23 +189,23 @@ function createConfigService(configRepository, options = {}) {
 
   return {
     getString(key) {
-      return getTyped(key, CONFIG_TYPES.STRING);
+      return getTyped(key, configTypes.STRING);
     },
 
     getInteger(key) {
-      return getTyped(key, CONFIG_TYPES.INTEGER);
+      return getTyped(key, configTypes.INTEGER);
     },
 
     getDecimal(key) {
-      return getTyped(key, CONFIG_TYPES.DECIMAL);
+      return getTyped(key, configTypes.DECIMAL);
     },
 
     getBoolean(key) {
-      return getTyped(key, CONFIG_TYPES.BOOLEAN);
+      return getTyped(key, configTypes.BOOLEAN);
     },
 
     getEnum(key) {
-      return getTyped(key, CONFIG_TYPES.ENUM);
+      return getTyped(key, configTypes.ENUM);
     },
 
     getRaw(key) {
@@ -182,15 +231,12 @@ function createConfigService(configRepository, options = {}) {
 
     validateRequiredConfig() {
       const records = configRepository.getAll();
-      const seen = new Set();
+      const seenKeys = new Set();
+      const seenConfigIds = new Set();
 
       for (const record of records) {
-        if (seen.has(record.key)) {
-          throw createConfigServiceError('CONFIG_DUPLICATE_KEY', record.key);
-        }
-
-        seen.add(record.key);
         const schema = assertKnownKey(schemaEntries, record.key);
+        assertRecordIntegrity(record, schema, seenKeys, seenConfigIds);
         convertValue(record, schema);
       }
 
@@ -207,7 +253,6 @@ function createConfigService(configRepository, options = {}) {
 
 if (typeof module !== 'undefined') {
   module.exports = {
-    CONFIG_SCHEMA,
     CONFIG_SERVICE_ERRORS,
     createConfigService,
     normalizeBoolean

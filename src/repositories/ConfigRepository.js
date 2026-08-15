@@ -1,7 +1,8 @@
 const CONFIG_ERRORS = {
   DUPLICATE_KEY: 'CONFIG_DUPLICATE_KEY',
   REQUIRED_KEY_MISSING: 'CONFIG_REQUIRED_KEY_MISSING',
-  INACTIVE_KEY: 'CONFIG_INACTIVE_KEY'
+  INACTIVE_KEY: 'CONFIG_INACTIVE_KEY',
+  INVALID_TYPE: 'CONFIG_INVALID_TYPE'
 };
 
 function createConfigError(code, detail) {
@@ -25,7 +26,7 @@ function normalizeActive(value) {
     }
   }
 
-  return Boolean(value);
+  throw createConfigError(CONFIG_ERRORS.INVALID_TYPE, 'ACTIVO');
 }
 
 function normalizeRecord(row) {

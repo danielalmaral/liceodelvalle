@@ -88,6 +88,43 @@ test('inactive required key is rejected', () => {
   assert.throws(() => service.getInteger('CONVOCADOS_A'), /CONFIG_INACTIVE_KEY: CONVOCADOS_A/);
 });
 
+test('ACTIVO accepts only explicit boolean representations', () => {
+  const validCases = [true, false, 'TRUE', 'FALSE', 'SI', 'NO', ' true ', ' no '];
+
+  for (const active of validCases) {
+    const service = serviceFromRows(completeConfigRows({ CONVOCADOS_A: '18' }).map((record) => {
+      if (record.CLAVE === 'CONVOCADOS_A') {
+        return { ...record, ACTIVO: active };
+      }
+
+      return record;
+    }));
+
+    if (active === false || String(active).trim().toUpperCase() === 'FALSE' || String(active).trim().toUpperCase() === 'NO') {
+      assert.throws(() => service.getInteger('CONVOCADOS_A'), /CONFIG_INACTIVE_KEY: CONVOCADOS_A/);
+    } else {
+      assert.equal(service.getInteger('CONVOCADOS_A'), 18);
+    }
+  }
+});
+
+test('ACTIVO rejects implicit truthy and invalid values', () => {
+  const invalidCases = ['yes', 'ERROR', '1', 1, null];
+
+  for (const active of invalidCases) {
+    const rows = completeConfigRows().map((record) => {
+      if (record.CLAVE === 'CONVOCADOS_A') {
+        return { ...record, ACTIVO: active };
+      }
+
+      return record;
+    });
+    const service = serviceFromRows(rows);
+
+    assert.throws(() => service.getInteger('CONVOCADOS_A'), /CONFIG_INVALID_TYPE: ACTIVO/);
+  }
+});
+
 test('invalid INTEGER type is rejected', () => {
   const service = serviceFromRows(completeConfigRows({ CONVOCADOS_A: 'dieciocho' }));
 
@@ -123,4 +160,56 @@ test('validateRequiredConfig accepts complete active typed config', () => {
   const service = serviceFromRows(completeConfigRows());
 
   assert.equal(service.validateRequiredConfig(), true);
+});
+
+test('validateRequiredConfig rejects wrong GRUPO metadata', () => {
+  const rows = completeConfigRows().map((record) => {
+    if (record.CLAVE === 'CONVOCADOS_A') {
+      return { ...record, GRUPO: 'GENERAL' };
+    }
+
+    return record;
+  });
+  const service = serviceFromRows(rows);
+
+  assert.throws(() => service.validateRequiredConfig(), /CONFIG_SCHEMA_INVALID: CONVOCADOS_A/);
+});
+
+test('validateRequiredConfig rejects duplicate CONFIG_ID metadata', () => {
+  const rows = completeConfigRows().map((record) => {
+    if (record.CLAVE === 'CONVOCADOS_B') {
+      return { ...record, CONFIG_ID: 'CFG_CONVOCADOS_A' };
+    }
+
+    return record;
+  });
+  const service = serviceFromRows(rows);
+
+  assert.throws(() => service.validateRequiredConfig(), /CONFIG_SCHEMA_INVALID: CONFIG_ID CFG_CONVOCADOS_A/);
+});
+
+test('validateRequiredConfig rejects empty CONFIG_ID metadata', () => {
+  const rows = completeConfigRows().map((record) => {
+    if (record.CLAVE === 'CONVOCADOS_A') {
+      return { ...record, CONFIG_ID: '  ' };
+    }
+
+    return record;
+  });
+  const service = serviceFromRows(rows);
+
+  assert.throws(() => service.validateRequiredConfig(), /CONFIG_SCHEMA_INVALID: CONFIG_ID/);
+});
+
+test('validateRequiredConfig rejects incompatible UNIDAD metadata', () => {
+  const rows = completeConfigRows().map((record) => {
+    if (record.CLAVE === 'CONVOCADOS_A') {
+      return { ...record, UNIDAD: 'puntos' };
+    }
+
+    return record;
+  });
+  const service = serviceFromRows(rows);
+
+  assert.throws(() => service.validateRequiredConfig(), /CONFIG_SCHEMA_INVALID: CONVOCADOS_A/);
 });

@@ -38,6 +38,7 @@ const requiredPaths = [
   'tests/config/config-fixtures.js',
   'tests/config/config-service.test.js',
   'tests/config/config-setup.test.js',
+  'tests/governance/gas-runtime-compatibility.test.js',
   'tests/eligibility/eligibility.test.js',
   'tests/rotation/rotation.test.js',
   'tests/convocation/convocation.test.js',
@@ -189,6 +190,28 @@ function scanConfigHardcodedRules() {
   return findings;
 }
 
+function scanGasRuntimeCompatibility() {
+  const findings = [];
+  const files = walk(path.join(root, 'src')).filter((file) => path.extname(file) === '.js');
+  const patterns = [
+    ['require', /\brequire\s*\(/],
+    ['import', /^\s*import\s/m],
+    ['export', /^\s*export\s/m]
+  ];
+
+  for (const file of files) {
+    const content = readText(file);
+
+    for (const [name, pattern] of patterns) {
+      if (pattern.test(content)) {
+        findings.push(`${relative(file)}:${name}`);
+      }
+    }
+  }
+
+  return findings;
+}
+
 function main() {
   assertRepoLock();
   assertRequiredStructure();
@@ -197,6 +220,7 @@ function main() {
   const securityFindings = scanSecurity();
   const piiFindings = scanPii();
   const configFindings = scanConfigHardcodedRules();
+  const gasFindings = scanGasRuntimeCompatibility();
 
   if (securityFindings.length > 0) {
     throw new Error(`Secret scan findings: ${securityFindings.join(', ')}`);
@@ -210,7 +234,12 @@ function main() {
     throw new Error(`Hardcoded config rule findings: ${configFindings.join(', ')}`);
   }
 
+  if (gasFindings.length > 0) {
+    throw new Error(`GAS runtime compatibility findings: ${gasFindings.join(', ')}`);
+  }
+
   console.log('STRUCTURE_VALIDATION: PASS');
+  console.log('GAS_RUNTIME_COMPATIBILITY: PASS');
   console.log('SECRET_SCAN: PASS');
   console.log('PII_SCAN: PASS');
   console.log('CONFIG_HARDCODED_RULES: 0');
@@ -221,5 +250,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  assertValidBranchName
+  assertValidBranchName,
+  scanGasRuntimeCompatibility
 };

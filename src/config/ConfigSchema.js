@@ -53,6 +53,12 @@ function getRequiredConfigKeys() {
   return CONFIG_SCHEMA.filter((entry) => entry.required).map((entry) => entry.key);
 }
 
+if (typeof globalThis !== 'undefined') {
+  globalThis.CONFIG_GROUPS = CONFIG_GROUPS;
+  globalThis.CONFIG_SCHEMA = CONFIG_SCHEMA;
+  globalThis.CONFIG_TYPES = CONFIG_TYPES;
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {
     CONFIG_GROUPS,
