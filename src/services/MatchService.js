@@ -34,6 +34,14 @@ function createMatchService(dependencies) {
     return score;
   }
 
+  function normalizeJornada(value) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+
+    return utils.requireText(value, 'JORNADA');
+  }
+
   function normalizeMatch(row) {
     var callTime = parseTime(row.HORA_CITACION, 'HORA_CITACION');
     var matchTime = parseTime(row.HORA_PARTIDO, 'HORA_PARTIDO');
@@ -51,7 +59,7 @@ function createMatchService(dependencies) {
     return {
       partidoId: utils.requireText(row.PARTIDO_ID, 'PARTIDO_ID'),
       competencia: utils.assertOneOf(row.COMPETENCIA, MATCH_ENUMS.COMPETENCIA, 'COMPETENCIA'),
-      jornada: utils.requireText(row.JORNADA, 'JORNADA'),
+      jornada: normalizeJornada(row.JORNADA),
       rival: utils.requireText(row.RIVAL, 'RIVAL'),
       fecha: utils.parseDateValue(row.FECHA, 'FECHA'),
       horaCitacion: row.HORA_CITACION || '',

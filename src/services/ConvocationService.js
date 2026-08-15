@@ -20,6 +20,48 @@ function createConvocationService(dependencies) {
     return next;
   }
 
+  function normalizeBoolean(value, fieldName) {
+    try {
+      return utils.normalizeStrictBoolean(value, fieldName);
+    } catch (error) {
+      throw utils.createDomainError('CONVOCATION_DETAIL_BOOLEAN_INVALID', fieldName);
+    }
+  }
+
+  function normalizeOptionalText(value) {
+    return utils.optionalText(value);
+  }
+
+  function normalizeRequiredText(value, code, detail) {
+    var normalized = utils.optionalText(value);
+
+    if (!normalized) {
+      throw utils.createDomainError(code, detail);
+    }
+
+    return normalized;
+  }
+
+  function normalizePosition(value) {
+    return utils.requireText(value, 'POSICION_ASIGNADA').toUpperCase();
+  }
+
+  function sameValue(left, right) {
+    if (left === null || left === undefined || left === '') {
+      return right === null || right === undefined || right === '';
+    }
+
+    if (right === null || right === undefined || right === '') {
+      return false;
+    }
+
+    if (typeof left === 'number' || typeof right === 'number') {
+      return Number(left) === Number(right);
+    }
+
+    return left === right;
+  }
+
   function snapshotConfig(competition) {
     var total = configService.getInteger(competition === 'A' ? 'CONVOCADOS_A' : 'CONVOCADOS_B');
     var minPo = configService.getInteger('MIN_PORTEROS');
@@ -235,6 +277,14 @@ function createConvocationService(dependencies) {
 
     assertUniqueBy(details, function(detail) { return detail.DETALLE_ID; }, 'CONVOCATION_DETAIL_DUPLICATE_ID');
     assertUniqueBy(details, function(detail) { return detail.ALUMNO_ID; }, 'CONVOCATION_DETAIL_DUPLICATE_STUDENT');
+
+    detailRepository.getAll().forEach(function(existingDetail) {
+      details.forEach(function(detail) {
+        if (existingDetail.DETALLE_ID === detail.DETALLE_ID) {
+          throw utils.createDomainError('CONVOCATION_DETAIL_ID_COLLISION', detail.DETALLE_ID);
+        }
+      });
+    });
   }
 
   function observations(selection) {
@@ -347,6 +397,9 @@ function createConvocationService(dependencies) {
       throw utils.createDomainError('CONVOCATION_DETAIL_NOT_FOUND', alumnoId);
     }
 
+    selected = normalizeBoolean(selected, 'SELECCIONADO_FINAL');
+    reason = normalizeOptionalText(reason);
+
     if (selected && detail.ELEGIBILITY_STATUS === 'INELIGIBLE') {
       throw utils.createDomainError('CONVOCATION_MANUAL_INELIGIBLE', alumnoId);
     }
@@ -355,19 +408,19 @@ function createConvocationService(dependencies) {
       throw utils.createDomainError('CONVOCATION_MANUAL_PENDING', alumnoId);
     }
 
-    if (Boolean(selected) !== Boolean(detail.RECOMENDADO_SISTEMA) && !reason) {
+    if (selected !== normalizeBoolean(detail.RECOMENDADO_SISTEMA, 'RECOMENDADO_SISTEMA') && !reason) {
       throw utils.createDomainError('CONVOCATION_MANUAL_REASON_REQUIRED', alumnoId);
     }
 
-    if (!selected && detail.PRIORIDAD_ROTACION && !reason) {
+    if (!selected && normalizeBoolean(detail.PRIORIDAD_ROTACION, 'PRIORIDAD_ROTACION') && !reason) {
       throw utils.createDomainError('ROTATION_EXCEPTION_REASON_REQUIRED', alumnoId);
     }
 
     nextDetail = copyRecord(detail);
-    nextDetail.SELECCIONADO_FINAL = Boolean(selected);
-    nextDetail.CAMBIO_MANUAL = Boolean(selected) !== Boolean(detail.RECOMENDADO_SISTEMA);
+    nextDetail.SELECCIONADO_FINAL = selected;
+    nextDetail.CAMBIO_MANUAL = selected !== normalizeBoolean(detail.RECOMENDADO_SISTEMA, 'RECOMENDADO_SISTEMA');
     nextDetail.MOTIVO_CAMBIO = reason || nextDetail.MOTIVO_CAMBIO || '';
-    nextDetail.ROTATION_EXCEPTION = !selected && detail.PRIORIDAD_ROTACION;
+    nextDetail.ROTATION_EXCEPTION = !selected && normalizeBoolean(detail.PRIORIDAD_ROTACION, 'PRIORIDAD_ROTACION');
 
     if (selected && !nextDetail.POSICION_ASIGNADA) {
       nextDetail.POSICION_ASIGNADA = nextDetail.POSICION_PRINCIPAL_SNAPSHOT;
@@ -404,6 +457,9 @@ function createConvocationService(dependencies) {
       throw utils.createDomainError('CONVOCATION_POSITION_UNSELECTED', alumnoId);
     }
 
+    position = normalizePosition(position);
+    reason = normalizeOptionalText(reason);
+
     if (!isAllowedPosition(detail, position)) {
       throw utils.createDomainError('CONVOCATION_ASSIGNED_POSITION_INVALID', alumnoId);
     }
@@ -420,9 +476,58 @@ function createConvocationService(dependencies) {
     return copyRecord(nextDetail);
   }
 
+  function canonicalDetails(details) {
+    return details.map(function(detail) {
+      var nextDetail = copyRecord(detail);
+      nextDetail.PRIORIDAD_ROTACION = normalizeBoolean(detail.PRIORIDAD_ROTACION, 'PRIORIDAD_ROTACION');
+      nextDetail.RECOMENDADO_SISTEMA = normalizeBoolean(detail.RECOMENDADO_SISTEMA, 'RECOMENDADO_SISTEMA');
+      nextDetail.SELECCIONADO_FINAL = normalizeBoolean(detail.SELECCIONADO_FINAL, 'SELECCIONADO_FINAL');
+      nextDetail.CAMBIO_MANUAL = normalizeBoolean(detail.CAMBIO_MANUAL, 'CAMBIO_MANUAL');
+      nextDetail.ROTATION_EXCEPTION = normalizeBoolean(detail.ROTATION_EXCEPTION, 'ROTATION_EXCEPTION');
+      nextDetail.MOTIVO_CAMBIO = normalizeOptionalText(detail.MOTIVO_CAMBIO);
+      return nextDetail;
+    });
+  }
+
+  function assertCurrentPoolSet(convocation, details) {
+    var currentPool = {};
+    var detailPool = {};
+    var currentCount = 0;
+    var detailCount = 0;
+
+    studentRepository.getAll().forEach(function(student) {
+      if (student.COMPETENCIA_BASE === convocation.COMPETENCIA) {
+        currentPool[student.ALUMNO_ID] = true;
+        currentCount += 1;
+      }
+    });
+
+    details.forEach(function(detail) {
+      detailPool[detail.ALUMNO_ID] = true;
+      detailCount += 1;
+    });
+
+    if (currentCount !== detailCount) {
+      throw utils.createDomainError('CONVOCATION_DETAIL_SET_MISMATCH', convocation.CONVOCATORIA_ID);
+    }
+
+    Object.keys(currentPool).forEach(function(studentId) {
+      if (!detailPool[studentId]) {
+        throw utils.createDomainError('CONVOCATION_DETAIL_SET_MISMATCH', studentId);
+      }
+    });
+
+    Object.keys(detailPool).forEach(function(studentId) {
+      if (!currentPool[studentId]) {
+        throw utils.createDomainError('CONVOCATION_DETAIL_SET_MISMATCH', studentId);
+      }
+    });
+  }
+
   function assertDetailIntegrity(convocation, details) {
     assertUniqueBy(details, function(detail) { return detail.DETALLE_ID; }, 'CONVOCATION_DETAIL_DUPLICATE_ID');
     assertUniqueBy(details, function(detail) { return detail.ALUMNO_ID; }, 'CONVOCATION_DETAIL_DUPLICATE_STUDENT');
+    assertCurrentPoolSet(convocation, details);
 
     details.forEach(function(detail) {
       utils.requireText(detail.DETALLE_ID, 'DETALLE_ID');
@@ -450,17 +555,23 @@ function createConvocationService(dependencies) {
 
   function assertCurrentAuthority(convocation, details) {
     var currentByStudent = {};
+    var studentById = {};
     var match = matchService.getMatchById(convocation.PARTIDO_ID);
 
     eligibilityService.evaluateMatch(convocation.PARTIDO_ID).forEach(function(eligibility) {
       currentByStudent[eligibility.studentId] = eligibility;
     });
 
+    studentRepository.getAll().forEach(function(student) {
+      studentById[student.ALUMNO_ID] = student;
+    });
+
     details.forEach(function(detail) {
       var current = currentByStudent[detail.ALUMNO_ID];
+      var student = studentById[detail.ALUMNO_ID];
       var rotation;
 
-      if (!current) {
+      if (!current || !student) {
         throw utils.createDomainError('CONVOCATION_STALE_PROPOSAL', detail.ALUMNO_ID);
       }
 
@@ -471,6 +582,17 @@ function createConvocationService(dependencies) {
       rotation = rotationService.previewUpdate(current, false);
 
       if (rotation.rotationBefore !== Number(detail.ROTACION_ANTES) || rotation.priorityRotation !== Boolean(detail.PRIORIDAD_ROTACION)) {
+        throw utils.createDomainError('CONVOCATION_STALE_PROPOSAL', detail.ALUMNO_ID);
+      }
+
+      if (
+        student.NIVEL !== detail.NIVEL_SNAPSHOT ||
+        student.POSICION_PRINCIPAL !== detail.POSICION_PRINCIPAL_SNAPSHOT ||
+        (student.POSICION_SECUNDARIA || '') !== detail.POSICION_SECUNDARIA_SNAPSHOT ||
+        !sameValue(current.compliancePercentage, detail.PUNTAJE_ASISTENCIA_SNAPSHOT) ||
+        !sameValue(current.physicalPresencePercentage, detail.PRESENCIA_REAL_SNAPSHOT) ||
+        previousSelectionCount(detail.ALUMNO_ID, convocation.COMPETENCIA) !== Number(detail.TOTAL_CONVOCATORIAS_PREVIAS)
+      ) {
         throw utils.createDomainError('CONVOCATION_STALE_PROPOSAL', detail.ALUMNO_ID);
       }
     });
@@ -510,9 +632,8 @@ function createConvocationService(dependencies) {
   }
 
   function validateApproval(convocation, details, actor) {
-    if (!actor) {
-      throw utils.createDomainError('CONVOCATION_APPROVAL_ACTOR_REQUIRED', convocation.CONVOCATORIA_ID);
-    }
+    actor = normalizeRequiredText(actor, 'CONVOCATION_APPROVAL_ACTOR_REQUIRED', convocation.CONVOCATORIA_ID);
+    details = canonicalDetails(details);
 
     assertProposal(convocation);
     assertNoPreviousAuthoritativeForMatch(convocation);
@@ -556,7 +677,7 @@ function createConvocationService(dependencies) {
 
   function approveConvocation(convocationId, actor) {
     var convocation = getConvocation(convocationId);
-    var details = getDetails(convocationId);
+    var details = canonicalDetails(getDetails(convocationId));
 
     if (!convocation) {
       throw utils.createDomainError('CONVOCATION_NOT_FOUND', convocationId);
@@ -580,6 +701,7 @@ function createConvocationService(dependencies) {
     nextConvocation.APROBADA_EN = clock.now();
     nextConvocation.APROBADA_POR = actor;
     nextConvocation.TOTAL_SELECCIONADOS = details.filter(function(detail) { return detail.SELECCIONADO_FINAL; }).length;
+    nextConvocation.APROBADA_POR = normalizeRequiredText(actor, 'CONVOCATION_APPROVAL_ACTOR_REQUIRED', convocation.CONVOCATORIA_ID);
     return convocationRepository.updateById('CONVOCATORIA_ID', convocationId, nextConvocation);
   }
 

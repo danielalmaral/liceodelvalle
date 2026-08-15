@@ -125,6 +125,21 @@ test('MATCH_DURATION_TEST requires positive integer duration', () => {
 
 test('MATCH_JORNADA_REQUIRED_TEST rejects undefined jornada', () => {
   assert.throws(() => matchService([match({ JORNADA: undefined })]).getMatches(), /REQUIRED_FIELD: JORNADA/);
+  assert.throws(() => matchService([match({ JORNADA: null })]).getMatches(), /REQUIRED_FIELD: JORNADA/);
+  assert.throws(() => matchService([match({ JORNADA: '   ' })]).getMatches(), /REQUIRED_FIELD: JORNADA/);
+});
+
+test('MATCH_JORNADA_STRING_TEST accepts string jornada', () => {
+  assert.equal(matchService([match({ JORNADA: '1' })]).getMatches()[0].jornada, '1');
+});
+
+test('MATCH_JORNADA_NUMERIC_TEST accepts numeric jornada as string', () => {
+  assert.equal(matchService([match({ JORNADA: 1 })]).getMatches()[0].jornada, '1');
+});
+
+test('MATCH_JORNADA_NAMED_STAGE_TEST accepts named stage jornada', () => {
+  assert.equal(matchService([match({ JORNADA: 'SEMIFINAL' })]).getMatches()[0].jornada, 'SEMIFINAL');
+  assert.equal(matchService([match({ JORNADA: 'FINAL' })]).getMatches()[0].jornada, 'FINAL');
 });
 
 test('MATCH_SETUP_IDEMPOTENCY_TEST creates and preserves PARTIDOS headers', () => {

@@ -678,7 +678,7 @@ test('CONVOCATION_DETAIL_FOREIGN_KEY_TEST rejects wrong detail convocation id', 
   state.convocationService.generateConvocation('PAR-001', 'coach');
   const detail = state.detailRepository.getAll()[0];
   state.detailRepository.updateById('DETALLE_ID', detail.DETALLE_ID, { ...detail, CONVOCATORIA_ID: 'CON-X' });
-  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_APPROVAL_EXACT_TOTAL/);
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_DETAIL_SET_MISMATCH/);
 });
 
 test('CONVOCATION_DETAIL_COMPETITION_TEST rejects wrong competition snapshot', () => {
@@ -714,6 +714,182 @@ test('CONVOCATION_DUPLICATE_PLAYER_APPROVAL_TEST rejects one player counted twic
 
 test('CONVOCATION_GENERATED_IDS_UNIQUE_TEST rejects duplicate generated detail ids', () => {
   assert.throws(() => generate({ idGenerator: { convocationId: () => 'CON-X', detailId: () => 'DET-DUP' } }), /CONVOCATION_DETAIL_DUPLICATE_ID/);
+});
+
+test('CONVOCATION_CURRENT_POOL_SET_TEST approves only when detail set matches current pool', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  assert.equal(state.convocationService.approveConvocation('CON-NEW', 'coach').ESTADO, 'APROBADA');
+});
+
+test('CONVOCATION_NEW_POOL_STUDENT_STALE_TEST rejects new current pool student', () => {
+  const students = baseStudents();
+  const state = service({ students });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  students.push(student('ALU-NEW', 'DEF'));
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_DETAIL_SET_MISMATCH/);
+});
+
+test('CONVOCATION_MISSING_UNSELECTED_DETAIL_TEST rejects missing detail', () => {
+  const state = service({ configService: config({ CONVOCADOS_A: '5' }), students: [...baseStudents(), student('ALU-FLEX', 'DEF')] });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.detailRepository.setRows(state.detailRepository.getAll().filter((detail) => detail.ALUMNO_ID !== 'ALU-FLEX'));
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_DETAIL_SET_MISMATCH/);
+});
+
+test('CONVOCATION_EXTRA_DETAIL_STALE_TEST rejects detail outside current pool', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.detailRepository.insert({ ...state.detailRepository.getAll()[0], DETALLE_ID: 'DET-EXTRA', ALUMNO_ID: 'ALU-EXTRA' });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_DETAIL_SET_MISMATCH|CONVOCATION_DETAIL_DUPLICATE/);
+});
+
+test('CONVOCATION_POOL_CHANGE_NO_PARTIAL_WRITE_TEST preserves proposal on pool change', () => {
+  const students = baseStudents();
+  const state = service({ students });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  students.push(student('ALU-NEW', 'DEF'));
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_DETAIL_SET_MISMATCH/);
+  assert.equal(state.convocationRepository.getAll()[0].ESTADO, 'PROPUESTA');
+});
+
+test('CONVOCATION_STALE_LEVEL_TEST rejects current level change', () => {
+  const students = baseStudents();
+  const state = service({ students });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  students.find((row) => row.ALUMNO_ID === 'ALU-DEF').NIVEL = 'A2';
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_STALE_PROPOSAL/);
+});
+
+test('CONVOCATION_STALE_PRIMARY_POSITION_TEST rejects current primary position change', () => {
+  const students = baseStudents();
+  const state = service({ students });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  students.find((row) => row.ALUMNO_ID === 'ALU-DEF').POSICION_PRINCIPAL = 'MED';
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_STALE_PROPOSAL/);
+});
+
+test('CONVOCATION_STALE_SECONDARY_POSITION_TEST rejects current secondary position change', () => {
+  const students = baseStudents({ 'ALU-DEF': { POSICION_SECUNDARIA: 'MED' } });
+  const state = service({ students });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  students.find((row) => row.ALUMNO_ID === 'ALU-DEF').POSICION_SECUNDARIA = 'DEL';
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_STALE_PROPOSAL/);
+});
+
+test('CONVOCATION_STALE_ATTENDANCE_SCORE_TEST rejects changed compliance score', () => {
+  const attendances = [];
+  const state = service({ attendances });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  attendances.push(attendance('ALU-DEF', { ALUMNO_ID: 'ALU-DEF' }));
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_STALE_PROPOSAL/);
+});
+
+test('CONVOCATION_STALE_PHYSICAL_PRESENCE_TEST rejects changed physical presence', () => {
+  const attendances = [attendance('ALU-DEF-A', { ALUMNO_ID: 'ALU-DEF', ESTADO: 'A', VALOR_APLICADO: 1, VALOR_MAXIMO_APLICADO: 1 })];
+  const state = service({ attendances });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  attendances.push(attendance('ALU-DEF-FJ', { ALUMNO_ID: 'ALU-DEF', ESTADO: 'FJ', VALOR_APLICADO: 1, VALOR_MAXIMO_APLICADO: 1 }));
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_STALE_PROPOSAL/);
+});
+
+test('CONVOCATION_STALE_PRIOR_SELECTION_COUNT_TEST rejects changed previous count', () => {
+  const matches = [match(), match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' })];
+  const convocations = [];
+  const details = [];
+  const state = service({ matches, convocations, details });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  convocations.push({ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'A', ESTADO: 'APROBADA' });
+  details.push({ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-DEF', COMPETENCIA_SNAPSHOT: 'A', ELEGIBILITY_STATUS: 'ELIGIBLE', SELECCIONADO_FINAL: true });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_STALE_PROPOSAL/);
+});
+
+test('CONVOCATION_FULL_RANKING_FRESHNESS_TEST rejects any ranking input drift', () => {
+  const students = baseStudents();
+  const state = service({ students });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  students.find((row) => row.ALUMNO_ID === 'ALU-MED').NIVEL = 'A2';
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_STALE_PROPOSAL/);
+});
+
+test('CONVOCATION_MANUAL_SELECTION_BOOLEAN_TEST accepts explicit boolean strings', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.convocationService.setFinalSelection('CON-NEW', 'ALU-PO', 'NO', 'Decision ficticia');
+  assert.equal(state.detailRepository.getAll().find((detail) => detail.ALUMNO_ID === 'ALU-PO').SELECCIONADO_FINAL, false);
+  state.convocationService.setFinalSelection('CON-NEW', 'ALU-PO', 'SI', '');
+  assert.equal(state.detailRepository.getAll().find((detail) => detail.ALUMNO_ID === 'ALU-PO').SELECCIONADO_FINAL, true);
+});
+
+test('CONVOCATION_MANUAL_FALSE_STRING_TEST treats FALSE as false', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.convocationService.setFinalSelection('CON-NEW', 'ALU-PO', 'false', 'Decision ficticia');
+  assert.equal(state.detailRepository.getAll().find((detail) => detail.ALUMNO_ID === 'ALU-PO').SELECCIONADO_FINAL, false);
+});
+
+test('CONVOCATION_MANUAL_INVALID_BOOLEAN_TEST rejects unsupported selection values', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  assert.throws(() => state.convocationService.setFinalSelection('CON-NEW', 'ALU-PO', 'yes', 'Decision ficticia'), /CONVOCATION_DETAIL_BOOLEAN_INVALID/);
+});
+
+test('CONVOCATION_MANUAL_REASON_WHITESPACE_TEST rejects whitespace reason', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  assert.throws(() => state.convocationService.setFinalSelection('CON-NEW', 'ALU-PO', false, '   '), /CONVOCATION_MANUAL_REASON_REQUIRED/);
+});
+
+test('CONVOCATION_PRIORITY_REASON_WHITESPACE_TEST rejects whitespace priority exception reason', () => {
+  const state = service({
+    matches: [match(), match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' })],
+    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'A', ESTADO: 'APROBADA' }],
+    details: [{ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-DEF', COMPETENCIA_SNAPSHOT: 'A', ELEGIBILITY_STATUS: 'ELIGIBLE', SELECCIONADO_FINAL: false }]
+  });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  assert.throws(() => state.convocationService.setFinalSelection('CON-NEW', 'ALU-DEF', false, '   '), /CONVOCATION_MANUAL_REASON_REQUIRED|ROTATION_EXCEPTION_REASON_REQUIRED/);
+});
+
+test('CONVOCATION_APPROVAL_ACTOR_WHITESPACE_TEST rejects whitespace actor', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', '   '), /CONVOCATION_APPROVAL_ACTOR_REQUIRED/);
+});
+
+test('CONVOCATION_POSITION_NORMALIZATION_TEST normalizes assigned position', () => {
+  const state = service({ students: baseStudents({ 'ALU-PO': { POSICION_SECUNDARIA: 'DEF' } }) });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.convocationService.assignPlayerPosition('CON-NEW', 'ALU-PO', ' def ', 'Decision ficticia');
+  assert.equal(state.detailRepository.getAll().find((detail) => detail.ALUMNO_ID === 'ALU-PO').POSICION_ASIGNADA, 'DEF');
+});
+
+test('CONVOCATION_DETAIL_BOOLEAN_INTEGRITY_TEST rejects non canonical detail booleans', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  const detail = state.detailRepository.getAll()[0];
+  state.detailRepository.updateById('DETALLE_ID', detail.DETALLE_ID, { ...detail, SELECCIONADO_FINAL: 'yes' });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_DETAIL_BOOLEAN_INVALID/);
+});
+
+test('CONVOCATION_DETAIL_EXISTING_ID_COLLISION_TEST rejects existing detail id collision', () => {
+  assert.throws(() => generate({ details: [{ DETALLE_ID: 'DET-ALU-PO', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-X' }] }), /CONVOCATION_DETAIL_ID_COLLISION/);
+});
+
+test('CONVOCATION_GENERATION_ID_PREFLIGHT_TEST rejects duplicate convocation before inserts', () => {
+  const convocations = [{ CONVOCATORIA_ID: 'CON-NEW', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'A', ESTADO: 'PROPUESTA' }];
+  const details = [];
+  const state = service({ convocations, details });
+  assert.throws(() => state.convocationService.generateConvocation('PAR-001', 'coach'), /CONVOCATION_DUPLICATE_ID/);
+  assert.equal(details.length, 0);
+});
+
+test('CONVOCATION_GENERATION_ID_COLLISION_NO_PARTIAL_WRITE_TEST rejects detail collision before partial writes', () => {
+  const convocations = [];
+  const details = [{ DETALLE_ID: 'DET-ALU-PO', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-X' }];
+  const state = service({ convocations, details });
+  assert.throws(() => state.convocationService.generateConvocation('PAR-001', 'coach'), /CONVOCATION_DETAIL_ID_COLLISION/);
+  assert.equal(convocations.length, 0);
+  assert.equal(details.length, 1);
 });
 
 test('CONVOCATION_PRIORITY_OVERFLOW_ALERT_TEST surfaces priority overflow', () => {
