@@ -3,6 +3,14 @@ function createAuditService(dependencies) {
   var auditRepository = dependencies.auditRepository;
   var idGenerator = dependencies.idGenerator || {};
   var clock = dependencies.clock || { now: function() { return new Date(); } };
+  var sensitiveFields = {
+    JUSTIFICACION: true,
+    OBSERVACIONES: true,
+    CUERPO: true,
+    DESTINATARIO: true,
+    EMAIL: true,
+    TELEFONO: true
+  };
 
   function copyRecord(record) {
     var next = {};
@@ -10,6 +18,13 @@ function createAuditService(dependencies) {
       next[key] = record[key];
     });
     return next;
+  }
+
+  function valueOrEmpty(value) {
+    if (value === undefined || value === null) {
+      return '';
+    }
+    return value;
   }
 
   function sanitize(value) {
@@ -31,6 +46,26 @@ function createAuditService(dependencies) {
     return input.operationId || input.OPERATION_ID || (idGenerator.operationId ? idGenerator.operationId(input) : fallback);
   }
 
+  function safeMotive(value, fallback) {
+    var text = utils.optionalText(value);
+    var allowed = {
+      ABSENCE_JUSTIFIED: true,
+      INJURY_RECORDED: true,
+      ABSENCE_EXPIRED: true,
+      STATUS_CHANGE: true,
+      HUMAN_APPROVAL: true,
+      MANUAL_CHANGE: true,
+      POST_MATCH_CAPTURE: true,
+      SEND_ATTEMPT: true
+    };
+
+    if (allowed[text]) {
+      return text;
+    }
+
+    return fallback || 'STATUS_CHANGE';
+  }
+
   function normalizeEvent(input) {
     var id = eventId(input);
 
@@ -38,18 +73,31 @@ function createAuditService(dependencies) {
       throw utils.createDomainError('AUDIT_EVENT_ID_REQUIRED', 'EVENTO_ID');
     }
 
+    var field = sanitize(valueOrEmpty(input.CAMPO !== undefined ? input.CAMPO : input.campo));
+    var redact = sensitiveFields[String(field).trim().toUpperCase()];
+
     return {
       EVENTO_ID: String(id).trim(),
-      FECHA_HORA: input.FECHA_HORA || input.fechaHora || clock.now(),
-      USUARIO: sanitize(input.USUARIO || input.usuario),
-      ENTIDAD: utils.requireText(input.ENTIDAD || input.entidad, 'ENTIDAD'),
-      ENTIDAD_ID: utils.requireText(input.ENTIDAD_ID || input.entidadId, 'ENTIDAD_ID'),
-      ACCION: utils.requireText(input.ACCION || input.accion, 'ACCION'),
-      CAMPO: sanitize(input.CAMPO || input.campo),
-      VALOR_ANTERIOR: sanitize(input.VALOR_ANTERIOR || input.valorAnterior),
-      VALOR_NUEVO: sanitize(input.VALOR_NUEVO || input.valorNuevo),
-      MOTIVO: sanitize(input.MOTIVO || input.motivo)
+      FECHA_HORA: valueOrEmpty(input.FECHA_HORA !== undefined ? input.FECHA_HORA : input.fechaHora) || clock.now(),
+      USUARIO: sanitize(valueOrEmpty(input.USUARIO !== undefined ? input.USUARIO : input.usuario)),
+      ENTIDAD: utils.requireText(valueOrEmpty(input.ENTIDAD !== undefined ? input.ENTIDAD : input.entidad), 'ENTIDAD'),
+      ENTIDAD_ID: utils.requireText(valueOrEmpty(input.ENTIDAD_ID !== undefined ? input.ENTIDAD_ID : input.entidadId), 'ENTIDAD_ID'),
+      ACCION: utils.requireText(valueOrEmpty(input.ACCION !== undefined ? input.ACCION : input.accion), 'ACCION'),
+      CAMPO: field,
+      VALOR_ANTERIOR: redact ? '[REDACTED]' : sanitize(valueOrEmpty(input.VALOR_ANTERIOR !== undefined ? input.VALOR_ANTERIOR : input.valorAnterior)),
+      VALOR_NUEVO: redact ? '[REDACTED]' : sanitize(valueOrEmpty(input.VALOR_NUEVO !== undefined ? input.VALOR_NUEVO : input.valorNuevo)),
+      MOTIVO: sanitize(valueOrEmpty(input.MOTIVO !== undefined ? input.MOTIVO : input.motivo))
     };
+  }
+
+  function sameAuthoritativePayload(left, right) {
+    var keys = ['ENTIDAD', 'ENTIDAD_ID', 'ACCION', 'CAMPO', 'VALOR_ANTERIOR', 'VALOR_NUEVO', 'MOTIVO'];
+    var normalizedLeft = normalizeEvent(left);
+    var normalizedRight = normalizeEvent(right);
+
+    return keys.every(function(key) {
+      return String(normalizedLeft[key]) === String(normalizedRight[key]);
+    });
   }
 
   function appendEvent(input) {
@@ -59,6 +107,9 @@ function createAuditService(dependencies) {
     })[0] || null;
 
     if (existing) {
+      if (!sameAuthoritativePayload(existing, event)) {
+        throw utils.createDomainError('AUDIT_EVENT_ID_CONFLICT', event.EVENTO_ID);
+      }
       return copyRecord(existing);
     }
 
@@ -89,7 +140,7 @@ function createAuditService(dependencies) {
   function recordAbsenceTransition(attendanceId, fromState, toState, actor, reason) {
     var opId = operationId(arguments[5] || {}, 'ABSENCE-' + attendanceId + '-' + fromState + '-' + toState);
     return appendEvent({
-      EVENTO_ID: 'AUD-' + opId + '-ASISTENCIAS-TRANSICION_AUSENCIA',
+      EVENTO_ID: 'AUD-' + opId + '-ASISTENCIA-' + attendanceId + '-TRANSICION_AUSENCIA',
       USUARIO: actor,
       ENTIDAD: 'ASISTENCIAS',
       ENTIDAD_ID: attendanceId,
@@ -97,7 +148,7 @@ function createAuditService(dependencies) {
       CAMPO: 'ESTADO',
       VALOR_ANTERIOR: fromState,
       VALOR_NUEVO: toState,
-      MOTIVO: reason || 'STATUS_CHANGE'
+      MOTIVO: safeMotive(reason, toState === 'FJ' ? 'ABSENCE_JUSTIFIED' : (toState === 'LES' ? 'INJURY_RECORDED' : (toState === 'FI' ? 'ABSENCE_EXPIRED' : 'STATUS_CHANGE')))
     });
   }
 

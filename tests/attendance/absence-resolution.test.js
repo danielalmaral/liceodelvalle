@@ -177,3 +177,8 @@ test('ABSENCE_RUNTIME_CONFIG_FAIL_CLOSED_TEST rejects invalid config and preserv
   assert.throws(() => resolverWithRepository(repository, config({ RETARDO_VALOR: '1.2' })).resolveAbsence('AST-001', 'FJ'), /ATTENDANCE_CONFIG_RELATION_INVALID/);
   assert.equal(repository.getAll()[0].ESTADO, 'F');
 });
+
+test('ABSENCE_NO_DEFERRED_AUDIT_MARKER_TEST does not expose deferred audit marker', () => {
+  const result = resolver().resolveAbsence('AST-001', 'FJ', { now: new Date('2026-01-02T12:00:00Z') });
+  assert.equal(result.audit.AUDIT_PERSISTENCE, undefined);
+});

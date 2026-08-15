@@ -83,8 +83,7 @@ function createAbsenceResolutionService(dependencies) {
         previousStatus: previous,
         newStatus: finalStatus,
         changedAt: now,
-        reason: reason,
-        AUDIT_PERSISTENCE: 'DEFERRED'
+        reason: reason
       }
     };
   }
