@@ -111,6 +111,33 @@ function getPanelReferenceData() {
   return safePanelResponse(function() { return panelRuntime().queries.getPanelReferenceData(); });
 }
 
+function stripAppStudent(student) {
+  return {
+    alumnoId: student.alumnoId,
+    nombre: student.nombre,
+    apellidos: student.apellidos,
+    grado: student.grado,
+    grupo: student.grupo,
+    competenciaBase: student.competenciaBase,
+    nivel: student.nivel,
+    posicionPrincipal: student.posicionPrincipal,
+    posicionSecundaria: student.posicionSecundaria,
+    active: student.active,
+    estadoDeportivo: student.estadoDeportivo
+  };
+}
+
+function getAppBootstrap() {
+  return safePanelResponse(function() {
+    var runtime = panelRuntime();
+    return toPanelSerializable({
+      dashboard: runtime.queries.getPanelDashboard(),
+      referenceData: runtime.queries.getPanelReferenceData(),
+      students: runtime.queries.getStudents().map(stripAppStudent)
+    });
+  });
+}
+
 function commandCreateSession(input) {
   return withPanelOperation('createSession', function(runtime, operationId) {
     var source = input || {};
@@ -326,6 +353,7 @@ if (typeof module !== 'undefined') {
     commandUpdateMatch,
     commandUpdateParticipation,
     commandUpdateSportsState,
+    getAppBootstrap,
     getPanelAttendance,
     getPanelConvocation,
     getPanelDashboard,
