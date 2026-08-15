@@ -357,3 +357,62 @@ test('LOW_PARTICIPATION_CANCELLED_MATCH_IGNORED_TEST ignores cancelled matches',
   svc.createParticipation(input({ MINUTOS_JUGADOS: 0 }));
   assert.equal(svc.validateMatchParticipationReadiness('PAR-001').alerts.some((alert) => alert.code === 'LOW_PARTICIPATION_STREAK'), false);
 });
+
+test('PARTICIPATION_READINESS_FALSE_STRING_TEST treats FALSE string as absent in readiness', () => {
+  const svc = service({
+    attendances: [attendance({ ESTADO: 'F' })],
+    participations: [{ ...input({ ASISTIO: 'FALSE', ASISTENCIA_ESTADO: 'F', CONDICION_INICIAL: '', MINUTOS_JUGADOS: 0, CALIFICACION: '' }), PARTICIPACION_ID: 'PRT-001' }]
+  });
+  assert.equal(svc.validateMatchParticipationReadiness('PAR-001').errors.includes('PARTICIPATION_RATING_PENDING'), false);
+});
+
+test('LOW_PARTICIPATION_PROGRAMMED_HISTORY_IGNORED_TEST ignores programmed historical matches', () => {
+  const svc = service({
+    config: { ALERTA_SUPLENCIAS_CONSECUTIVAS: '2' },
+    matches: [match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01', ESTADO: 'PROGRAMADO', GOLES_FAVOR: '', GOLES_CONTRA: '' }), match()],
+    convocations: [convocation({ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD' }), convocation()],
+    details: [detail({ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD' }), detail()],
+    participations: [{ ...input({ MINUTOS_JUGADOS: 0 }), PARTICIPACION_ID: 'PRT-OLD', PARTIDO_ID: 'PAR-OLD', CONVOCATORIA_ID: 'CON-OLD' }]
+  });
+  svc.createParticipation(input({ MINUTOS_JUGADOS: 0 }));
+  assert.equal(svc.validateMatchParticipationReadiness('PAR-001').alerts.some((alert) => alert.code === 'LOW_PARTICIPATION_STREAK'), false);
+});
+
+test('LOW_PARTICIPATION_SAME_DAY_FUTURE_MATCH_IGNORED_TEST ignores later same-day match', () => {
+  const svc = service({
+    config: { ALERTA_SUPLENCIAS_CONSECUTIVAS: '2' },
+    matches: [match(), match({ PARTIDO_ID: 'PAR-FUTURE', FECHA: '2026-02-01', HORA_PARTIDO: '12:00' })],
+    convocations: [convocation(), convocation({ CONVOCATORIA_ID: 'CON-FUTURE', PARTIDO_ID: 'PAR-FUTURE' })],
+    details: [detail(), detail({ DETALLE_ID: 'DET-FUTURE', CONVOCATORIA_ID: 'CON-FUTURE' })],
+    participations: [{ ...input({ MINUTOS_JUGADOS: 0 }), PARTICIPACION_ID: 'PRT-FUTURE', PARTIDO_ID: 'PAR-FUTURE', CONVOCATORIA_ID: 'CON-FUTURE' }]
+  });
+  svc.createParticipation(input({ MINUTOS_JUGADOS: 0 }));
+  assert.equal(svc.validateMatchParticipationReadiness('PAR-001').alerts.some((alert) => alert.code === 'LOW_PARTICIPATION_STREAK'), false);
+});
+
+test('LOW_PARTICIPATION_FULL_CHRONOLOGY_CUTOFF_TEST includes prior same-day and excludes future same-day', () => {
+  const svc = service({
+    config: { ALERTA_SUPLENCIAS_CONSECUTIVAS: '2' },
+    matches: [
+      match({ PARTIDO_ID: 'PAR-PRIOR', FECHA: '2026-02-01', HORA_CITACION: '07:00', HORA_PARTIDO: '08:00' }),
+      match(),
+      match({ PARTIDO_ID: 'PAR-FUTURE', FECHA: '2026-02-01', HORA_PARTIDO: '12:00' })
+    ],
+    convocations: [
+      convocation({ CONVOCATORIA_ID: 'CON-PRIOR', PARTIDO_ID: 'PAR-PRIOR' }),
+      convocation(),
+      convocation({ CONVOCATORIA_ID: 'CON-FUTURE', PARTIDO_ID: 'PAR-FUTURE' })
+    ],
+    details: [
+      detail({ DETALLE_ID: 'DET-PRIOR', CONVOCATORIA_ID: 'CON-PRIOR' }),
+      detail(),
+      detail({ DETALLE_ID: 'DET-FUTURE', CONVOCATORIA_ID: 'CON-FUTURE' })
+    ],
+    participations: [
+      { ...input({ MINUTOS_JUGADOS: 0 }), PARTICIPACION_ID: 'PRT-PRIOR', PARTIDO_ID: 'PAR-PRIOR', CONVOCATORIA_ID: 'CON-PRIOR' },
+      { ...input({ MINUTOS_JUGADOS: 0 }), PARTICIPACION_ID: 'PRT-FUTURE', PARTIDO_ID: 'PAR-FUTURE', CONVOCATORIA_ID: 'CON-FUTURE' }
+    ]
+  });
+  svc.createParticipation(input({ MINUTOS_JUGADOS: 0 }));
+  assert.equal(svc.validateMatchParticipationReadiness('PAR-001').alerts.some((alert) => alert.code === 'LOW_PARTICIPATION_STREAK'), true);
+});

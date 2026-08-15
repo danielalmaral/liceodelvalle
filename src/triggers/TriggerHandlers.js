@@ -1,14 +1,5 @@
 function createTriggerHandlers(dependencies) {
-  var services = dependencies.services || {};
   var commands = dependencies.commands || {};
-  var lock = dependencies.lock || { runExclusive: function(callback) { return callback(); } };
-
-  function withLock(callback) {
-    if (lock && typeof lock.runExclusive === 'function') {
-      return lock.runExclusive(callback);
-    }
-    return callback();
-  }
 
   function summarize(results) {
     var succeeded = 0;
@@ -26,25 +17,20 @@ function createTriggerHandlers(dependencies) {
   }
 
   function expirePendingAbsences(now) {
-    if (commands.resolveExpiredAbsences) {
-      var commandResults = commands.resolveExpiredAbsences(now) || [];
-      return summarize(commandResults.map(function() { return { ok: true }; }));
+    if (!commands.resolveExpiredAbsences) {
+      throw new Error('TRIGGER_COMMAND_REQUIRED: resolveExpiredAbsences');
     }
 
-    return withLock(function() {
-      var results = services.absenceResolutionService.resolveExpiredAbsences(now) || [];
-      return summarize(results.map(function() { return { ok: true }; }));
-    });
+    var commandResults = commands.resolveExpiredAbsences(now) || [];
+    return summarize(commandResults.map(function() { return { ok: true }; }));
   }
 
   function sendPendingCommunications() {
-    if (commands.sendPendingCommunications) {
-      return summarize(commands.sendPendingCommunications() || []);
+    if (!commands.sendPendingCommunications) {
+      throw new Error('TRIGGER_COMMAND_REQUIRED: sendPendingCommunications');
     }
 
-    return withLock(function() {
-      return summarize(services.communicationService.sendPendingCommunications() || []);
-    });
+    return summarize(commands.sendPendingCommunications() || []);
   }
 
   return {

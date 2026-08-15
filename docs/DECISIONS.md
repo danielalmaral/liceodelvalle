@@ -70,4 +70,8 @@ El runtime de Apps Script se compone desde adapters explícitos, Script Properti
 
 ## ADR-018: Comandos Operativos Como Autoridad De Escritura
 
-Los writes criticos P10-P13 deben pasar por comandos runtime lockeados. Cuando un write requiere bitacora, el comando escribe dominio, agrega evento append-only con `operationId` y reporta reconciliacion si el append falla despues del write.
+Los writes criticos P10-P13 deben pasar por comandos runtime lockeados. Cuando un write requiere bitacora, el comando exige `operationId`, verifica replay/conflicto antes del dominio, escribe sólo operaciones nuevas, agrega evento append-only y reporta reconciliacion si el append falla despues del write.
+
+## ADR-019: Runtime Read-Only Hacia Consumidores
+
+La composicion mantiene servicios mutables internos y expone al consumidor sólo `runtime.commands` para mutaciones y fachadas de lectura en `runtime.queries`/`runtime.services`. Los triggers productivos usan commands y fallan cerrado si falta la frontera operacional.

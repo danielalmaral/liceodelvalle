@@ -28,6 +28,10 @@ function createAppsScriptRuntime(options) {
     throw new Error('RUNTIME_LOCK_REQUIRED');
   }
 
+  if (!options.idGenerator || typeof options.idGenerator.operationId !== 'function') {
+    throw new Error('RUNTIME_OPERATION_ID_GENERATOR_REQUIRED');
+  }
+
   if (options.repositories) {
     repositories = options.repositories;
   } else if (typeof options.createRepository === 'function') {
@@ -197,6 +201,9 @@ function createAppsScriptRuntime(options) {
     assignPlayerPosition: lockedCommand('assignPlayerPosition'),
     createAttendance: function(input) { return withLock(function() { return attendanceFoundationService.createAttendance(input); }); },
     createParticipation: lockedCommand('createParticipation'),
+    generateAbsenceCommunications: function(attendanceId) { return withLock(function() { return operationalCommandService.generateAbsenceCommunications(attendanceId); }); },
+    generateConvocation: function(matchId) { return withLock(function() { return operationalCommandService.generateConvocation(matchId); }); },
+    generateConvocationCommunications: function(convocationId) { return withLock(function() { return operationalCommandService.generateConvocationCommunications(convocationId); }); },
     resolveAbsence: lockedCommand('resolveAbsence'),
     resolveExpiredAbsences: lockedCommand('resolveExpiredAbsences'),
     retryCommunication: lockedCommand('retryCommunication'),
@@ -204,13 +211,28 @@ function createAppsScriptRuntime(options) {
     setFinalSelection: lockedCommand('setFinalSelection'),
     updateParticipation: lockedCommand('updateParticipation')
   };
+  var queries = {
+    evaluateMatch: function(matchId) { return eligibilityService.evaluateMatch(matchId); },
+    getAttendances: function() { return attendanceFoundationService.getAttendances(); },
+    getCommunications: function() { return communicationService.getCommunications(); },
+    getEvents: function() { return auditService.getEvents(); },
+    getMatches: function() { return matchService.getMatches(); },
+    getParticipations: function() { return participationService.getParticipations(); },
+    getRotationBefore: function(matchId) { return rotationService.getRotationBefore(matchId); },
+    getSessions: function() { return attendanceFoundationService.getSessions(); },
+    getStudentMetrics: function(studentId) { return attendanceMetricsService.getStudentMetrics(studentId); },
+    getStudents: function() { return masterDataService.getStudents(); },
+    getTutors: function() { return masterDataService.getTutors(); },
+    validateMatchParticipationReadiness: function(matchId) { return participationService.validateMatchParticipationReadiness(matchId); }
+  };
 
   return {
     commands: commands,
+    queries: queries,
     repositories: repositories,
     runtime: { spreadsheetId: spreadsheetId, withLock: withLock },
-    services: services,
-    triggerHandlers: triggerFactory({ commands: commands, lock: { runExclusive: withLock }, services: services })
+    services: queries,
+    triggerHandlers: triggerFactory({ commands: commands })
   };
 }
 

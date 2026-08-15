@@ -18,11 +18,13 @@ Runtime:
 - `createAppsScriptRuntime` requiere `spreadsheetId` desde environment adapter.
 - `createAppsScriptRuntime` requiere repositorios canonicos para `CONFIG`, `ALUMNOS`, `TUTORES`, `SESIONES`, `ASISTENCIAS`, `PARTIDOS`, `CONVOCATORIAS`, `CONVOCATORIA_DETALLE`, `PARTICIPACION_PARTIDO`, `COMUNICACIONES` y `BITACORA`.
 - El grafo de servicios se construye explicitamente; dependencias criticas faltantes fallan con `RUNTIME_CONFIG_DEPENDENCY_REQUIRED`.
+- `idGenerator.operationId` es obligatorio para la frontera operacional.
 - IDs y entorno futuro viven en Script Properties, no hardcoded.
 - El lock es obligatorio. Los comandos de escritura expuestos por runtime se ejecutan bajo `runExclusive`.
-- `runtime.commands` es la autoridad para writes criticos auditados: ausencias, asistencias, convocatoria final, participacion, comunicaciones y bitacora.
+- `runtime.commands` es la autoridad para writes criticos: ausencias, asistencias, generacion de convocatoria, seleccion final, generacion/envio de comunicaciones, participacion y bitacora.
+- `runtime.services` y `runtime.queries` exponen sólo fachadas de lectura; los servicios mutables internos no se devuelven.
 - Handlers disponibles: `expirePendingAbsences` y `sendPendingCommunications`.
-- Los handlers usan comandos ya lockeados cuando estan disponibles para evitar doble lock.
+- Los handlers usan exclusivamente commands. Si falta el command requerido, fallan con `TRIGGER_COMMAND_REQUIRED`.
 - No se instalan triggers ni se ejecutan adapters reales en tests.
 
 Setup global:

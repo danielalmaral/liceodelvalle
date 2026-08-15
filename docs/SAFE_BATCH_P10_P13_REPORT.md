@@ -17,6 +17,15 @@ Correctivo aplicado:
 - Participacion con consistencia estricta entre asistencia, presencia y estadisticas de ausentes.
 - `SheetRepository` falla cerrado ante mutacion de ID, duplicados en `findById` y headers extra.
 
+Correctivo 02 aplicado:
+
+- Idempotencia operacional real: replay por `operationId` no repite write y payload distinto falla antes del dominio.
+- Runtime sin bypass externo a servicios mutables; commands agregados para generacion de convocatoria y comunicaciones.
+- Triggers sin fallback a services.
+- Entrega de comunicaciones con marker durable previo y bloqueo de incertidumbre.
+- Auditoria con conflicto por `EVENTO_ID`, redaccion de campos sensibles y eventos por campo cambiado.
+- Readiness y rachas de participacion endurecidas con booleanos canonicos y cronologia completa.
+
 No ejecuta recursos reales:
 
 - Sin Spreadsheet productivo.

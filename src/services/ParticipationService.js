@@ -277,6 +277,26 @@ function createParticipationService(dependencies) {
       return alerts;
     }
 
+    function chronologyKey(candidate) {
+      return [
+        candidate.fecha.getTime(),
+        String(candidate.horaPartido || ''),
+        String(candidate.partidoId || '')
+      ];
+    }
+
+    function compareChronology(left, right) {
+      var a = chronologyKey(left);
+      var b = chronologyKey(right);
+      if (a[0] !== b[0]) {
+        return a[0] - b[0];
+      }
+      if (a[1] !== b[1]) {
+        return a[1].localeCompare(b[1]);
+      }
+      return a[2].localeCompare(b[2]);
+    }
+
     matchService.getMatches().forEach(function(candidate) {
       matchById[candidate.partidoId] = candidate;
     });
@@ -286,7 +306,7 @@ function createParticipationService(dependencies) {
       if (
         candidateMatch &&
         candidateMatch.competencia === match.competencia &&
-        candidateMatch.estado !== 'CANCELADO' &&
+        candidateMatch.estado === 'JUGADO' &&
         AUTHORITATIVE_CONVOCATION_STATES.indexOf(convocation.ESTADO) !== -1
       ) {
         authoritativeByMatch[convocation.PARTIDO_ID] = convocation.CONVOCATORIA_ID;
@@ -304,17 +324,13 @@ function createParticipationService(dependencies) {
     }
 
     function sortedRelevantMatches() {
+      var currentKey = chronologyKey(match);
       return matchService.getMatches().filter(function(candidate) {
-        return authoritativeByMatch[candidate.partidoId] && candidate.competencia === match.competencia && candidate.fecha.getTime() <= match.fecha.getTime();
-      }).sort(function(left, right) {
-        if (left.fecha.getTime() !== right.fecha.getTime()) {
-          return left.fecha.getTime() - right.fecha.getTime();
-        }
-        if (left.horaPartido !== right.horaPartido) {
-          return String(left.horaPartido).localeCompare(String(right.horaPartido));
-        }
-        return String(left.partidoId).localeCompare(String(right.partidoId));
-      });
+        return authoritativeByMatch[candidate.partidoId] &&
+          candidate.competencia === match.competencia &&
+          candidate.estado === 'JUGADO' &&
+          compareChronology(candidate, match) <= 0;
+      }).sort(compareChronology);
     }
 
     currentRecords.forEach(function(record) {
@@ -389,7 +405,7 @@ function createParticipationService(dependencies) {
 
       normalizeParticipation(record, record.PARTICIPACION_ID);
 
-      if (record.ASISTIO && record.CALIFICACION === '') {
+      if (normalizeBoolean(record.ASISTIO, 'ASISTIO') && record.CALIFICACION === '') {
         errors.push('PARTICIPATION_RATING_PENDING');
       }
     });

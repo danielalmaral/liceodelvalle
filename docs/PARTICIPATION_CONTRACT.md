@@ -17,4 +17,4 @@ Reglas principales:
 - `ROJAS` permite máximo 1 y genera `RED_CARD_REVIEW_REQUIRED` cuando la config lo requiere.
 - Calificación usa escala y decimales desde `CONFIG`.
 - Readiness de partido programado falla con `MATCH_NOT_PLAYED`; no autoriza cierre de estadísticas antes de `JUGADO`.
-- `LOW_PARTICIPATION_STREAK` se calcula cronológicamente por competencia sobre convocatorias autoritativas, aprobadas o posteriores, donde el alumno fue seleccionado final. Participaciones con minutos positivos cortan la racha; partidos no seleccionados, cancelados o de otra competencia no fabrican ceros.
+- `LOW_PARTICIPATION_STREAK` se calcula cronológicamente por competencia sobre partidos `JUGADO` con convocatorias autoritativas, aprobadas o posteriores, donde el alumno fue seleccionado final. Participaciones con minutos positivos cortan la racha; partidos no seleccionados, programados, cancelados, futuros en la misma fecha o de otra competencia no fabrican ceros.

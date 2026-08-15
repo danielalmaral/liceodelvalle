@@ -48,4 +48,4 @@ Los módulos en `src/` conservan compatibilidad directa con Apps Script V8: no d
 
 `ParticipationService`, `CommunicationService`, `AuditService`, `OperationalCommandService`, `SheetRepository`, `RuntimeComposition` y `TriggerHandlers` completan la capa operacional sin recursos productivos. La participación usa asistencia y convocatoria como autoridad; comunicaciones persiste mensajes 1:N por tutor; bitácora es append-only y sanitizada; `SheetRepository` mapea headers a objetos sin usar row numbers como identidad funcional.
 
-La composición runtime exige `spreadsheetId`, repositorios canonicos, dependencias explicitas y lock inyectado. Los writes criticos se exponen por comandos lockeados y auditados. Los triggers quedan definidos como funciones idempotentes, pero no se instalan en esta fase.
+La composición runtime exige `spreadsheetId`, repositorios canonicos, dependencias explicitas, `idGenerator.operationId` y lock inyectado. Los writes criticos se exponen sólo por comandos lockeados; las lecturas salen por fachadas read-only. Los triggers dependen de commands y no tienen fallback a servicios mutables. No se instalan triggers en esta fase.

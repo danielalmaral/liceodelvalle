@@ -237,26 +237,26 @@ test('SHEET_REPOSITORY_EXTRA_HEADER_TEST rejects extra non-empty header', () => 
 test('RUNTIME_COMPOSITION_TEST builds runtime with fake repositories', () => {
   const runtime = createAppsScriptRuntime(runtimeOptions({ environment: { getSpreadsheetId: () => 'test-spreadsheet' } }));
   assert.equal(runtime.runtime.spreadsheetId, 'test-spreadsheet');
-  assert.equal(typeof runtime.services.configService.getInteger, 'function');
+  assert.equal(typeof runtime.queries.getStudents, 'function');
   assert.equal(typeof runtime.commands.createAttendance, 'function');
 });
 
 test('RUNTIME_FULL_GRAPH_COMPOSITION_TEST builds all P1-P13 services and commands', () => {
   const runtime = createAppsScriptRuntime(runtimeOptions());
   [
-    'configService',
-    'masterDataService',
-    'attendanceFoundationService',
-    'absenceResolutionService',
-    'attendanceMetricsService',
-    'matchService',
-    'eligibilityService',
-    'rotationService',
-    'convocationService',
-    'participationService',
-    'communicationService',
-    'auditService'
-  ].forEach((name) => assert.equal(typeof runtime.services[name], 'object'));
+    'getStudents',
+    'getTutors',
+    'getSessions',
+    'getAttendances',
+    'getStudentMetrics',
+    'getMatches',
+    'evaluateMatch',
+    'getRotationBefore',
+    'getParticipations',
+    'validateMatchParticipationReadiness',
+    'getCommunications',
+    'getEvents'
+  ].forEach((name) => assert.equal(typeof runtime.queries[name], 'function'));
   assert.equal(typeof runtime.commands.approveConvocation, 'function');
 });
 
@@ -291,10 +291,16 @@ test('RUNTIME_CRITICAL_WRITE_LOCK_TEST runs command writes inside lock callback'
   const options = runtimeOptions({
     lock: { runExclusive(callback) { insideLock = true; try { return callback(); } finally { insideLock = false; } } }
   });
-  options.repositories.auditRepository = createArrayRepository([]);
+  options.repositories.attendanceRepository = createArrayRepository([{ ASISTENCIA_ID: 'AST-001', ESTADO: 'F' }]);
+  options.repositories.auditRepository = {
+    getAll() { return []; },
+    insert(record) { observedInside = insideLock; return record; }
+  };
+  options.constructors.createAbsenceResolutionService = () => ({
+    resolveAbsence() { return { attendance: { ASISTENCIA_ID: 'AST-001', ESTADO: 'FJ' } }; },
+    resolveExpiredAbsences() { return []; }
+  });
   const runtime = createAppsScriptRuntime(options);
-  runtime.services.auditService.appendEvent = () => { observedInside = insideLock; return {}; };
-  runtime.services.absenceResolutionService.resolveAbsence = () => ({ attendance: { ASISTENCIA_ID: 'AST-001', ESTADO: 'FJ' } });
   runtime.commands.resolveAbsence('AST-001', 'FJ');
   assert.equal(observedInside, true);
 });
@@ -302,11 +308,13 @@ test('RUNTIME_CRITICAL_WRITE_LOCK_TEST runs command writes inside lock callback'
 test('RUNTIME_APPROVAL_LOCK_TEST locks convocation approval command', () => {
   let insideLock = false;
   let observedInside = false;
-  const runtime = createAppsScriptRuntime(runtimeOptions({
+  const options = runtimeOptions({
     lock: { runExclusive(callback) { insideLock = true; try { return callback(); } finally { insideLock = false; } } }
-  }));
-  runtime.services.convocationService.approveConvocation = () => { observedInside = insideLock; return { ESTADO: 'APROBADA' }; };
-  runtime.commands.approveConvocation('CON-001', 'coach');
+  });
+  options.constructors.createConvocationService = () => ({
+    approveConvocation() { observedInside = insideLock; return { CONVOCATORIA_ID: 'CON-001', ESTADO: 'APROBADA' }; }
+  });
+  createAppsScriptRuntime(options).commands.approveConvocation('CON-001', 'coach');
   assert.equal(observedInside, true);
 });
 
@@ -327,22 +335,107 @@ test('RUNTIME_ATTENDANCE_LOCK_TEST locks create attendance command', () => {
 test('RUNTIME_PARTICIPATION_LOCK_TEST locks participation command', () => {
   let insideLock = false;
   let observedInside = false;
-  const runtime = createAppsScriptRuntime(runtimeOptions({
+  const options = runtimeOptions({
     lock: { runExclusive(callback) { insideLock = true; try { return callback(); } finally { insideLock = false; } } }
-  }));
-  runtime.services.participationService.updateParticipation = () => { observedInside = insideLock; return { PARTICIPACION_ID: 'PRT-001', MINUTOS_JUGADOS: 1 }; };
-  runtime.commands.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 1 });
+  });
+  options.repositories.participationRepository = createArrayRepository([{ PARTICIPACION_ID: 'PRT-001', MINUTOS_JUGADOS: 0 }]);
+  options.constructors.createParticipationService = () => ({
+    getParticipations() { return []; },
+    updateParticipation() { observedInside = insideLock; return { PARTICIPACION_ID: 'PRT-001', MINUTOS_JUGADOS: 1 }; },
+    validateMatchParticipationReadiness() { return { ready: true, errors: [], alerts: [] }; }
+  });
+  createAppsScriptRuntime(options).commands.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 1 });
   assert.equal(observedInside, true);
 });
 
 test('RUNTIME_COMMUNICATION_LOCK_TEST locks communication command', () => {
   let insideLock = false;
   let observedInside = false;
-  const runtime = createAppsScriptRuntime(runtimeOptions({
+  const options = runtimeOptions({
     lock: { runExclusive(callback) { insideLock = true; try { return callback(); } finally { insideLock = false; } } }
-  }));
-  runtime.services.communicationService.sendPendingCommunications = () => { observedInside = insideLock; return []; };
-  runtime.commands.sendPendingCommunications();
+  });
+  options.constructors.createCommunicationService = () => ({
+    generateAbsenceCommunications() { return { created: [] }; },
+    generateConvocationCommunications() { return { created: [] }; },
+    getCommunications() { return []; },
+    retryCommunication() { return { communication: { COMUNICACION_ID: 'COM-001', ESTADO: 'ERROR' } }; },
+    sendPendingCommunications() { observedInside = insideLock; return []; }
+  });
+  createAppsScriptRuntime(options).commands.sendPendingCommunications();
+  assert.equal(observedInside, true);
+});
+
+test('RUNTIME_MUTATION_BYPASS_BLOCKED_TEST does not expose mutable services', () => {
+  const runtime = createAppsScriptRuntime(runtimeOptions());
+  [
+    'createAttendance',
+    'resolveAbsence',
+    'resolveExpiredAbsences',
+    'generateConvocation',
+    'setFinalSelection',
+    'assignPlayerPosition',
+    'approveConvocation',
+    'createParticipation',
+    'updateParticipation',
+    'generateAbsenceCommunications',
+    'generateConvocationCommunications',
+    'sendPendingCommunications',
+    'retryCommunication',
+    'appendEvent'
+  ].forEach((name) => assert.equal(runtime.services[name], undefined));
+});
+
+test('RUNTIME_READ_ONLY_QUERY_FACADE_TEST exposes read-only facades', () => {
+  const runtime = createAppsScriptRuntime(runtimeOptions());
+  assert.equal(typeof runtime.services.getStudents, 'function');
+  assert.equal(typeof runtime.services.getEvents, 'function');
+  assert.equal(runtime.services.approveConvocation, undefined);
+});
+
+test('RUNTIME_GENERATE_CONVOCATION_LOCK_TEST locks generation command', () => {
+  let insideLock = false;
+  let observedInside = false;
+  const options = runtimeOptions({
+    lock: { runExclusive(callback) { insideLock = true; try { return callback(); } finally { insideLock = false; } } }
+  });
+  options.constructors.createConvocationService = () => ({
+    generateConvocation() { observedInside = insideLock; return { CONVOCATORIA_ID: 'CON-001' }; }
+  });
+  createAppsScriptRuntime(options).commands.generateConvocation('PAR-001');
+  assert.equal(observedInside, true);
+});
+
+test('RUNTIME_GENERATE_ABSENCE_COMMUNICATION_LOCK_TEST locks absence communication generation', () => {
+  let insideLock = false;
+  let observedInside = false;
+  const options = runtimeOptions({
+    lock: { runExclusive(callback) { insideLock = true; try { return callback(); } finally { insideLock = false; } } }
+  });
+  options.constructors.createCommunicationService = () => ({
+    generateAbsenceCommunications() { observedInside = insideLock; return { created: [] }; },
+    generateConvocationCommunications() { return { created: [] }; },
+    getCommunications() { return []; },
+    retryCommunication() { return { communication: { COMUNICACION_ID: 'COM-001', ESTADO: 'ERROR' } }; },
+    sendPendingCommunications() { return []; }
+  });
+  createAppsScriptRuntime(options).commands.generateAbsenceCommunications('AST-001');
+  assert.equal(observedInside, true);
+});
+
+test('RUNTIME_GENERATE_CONVOCATION_COMMUNICATION_LOCK_TEST locks convocation communication generation', () => {
+  let insideLock = false;
+  let observedInside = false;
+  const options = runtimeOptions({
+    lock: { runExclusive(callback) { insideLock = true; try { return callback(); } finally { insideLock = false; } } }
+  });
+  options.constructors.createCommunicationService = () => ({
+    generateAbsenceCommunications() { return { created: [] }; },
+    generateConvocationCommunications() { observedInside = insideLock; return { created: [] }; },
+    getCommunications() { return []; },
+    retryCommunication() { return { communication: { COMUNICACION_ID: 'COM-001', ESTADO: 'ERROR' } }; },
+    sendPendingCommunications() { return []; }
+  });
+  createAppsScriptRuntime(options).commands.generateConvocationCommunications('CON-001');
   assert.equal(observedInside, true);
 });
 
@@ -372,19 +465,30 @@ test('RUNTIME_NO_REAL_EXTERNAL_CALL_TEST does not call real adapters during cons
 
 test('TRIGGER_EXPIRED_ABSENCE_IDEMPOTENCY_TEST summarizes expired absence handler', () => {
   let calls = 0;
-  const handlers = createTriggerHandlers({ services: { absenceResolutionService: { resolveExpiredAbsences() { calls += 1; return calls === 1 ? [{ attendance: {} }] : []; } } } });
+  const handlers = createTriggerHandlers({ commands: { resolveExpiredAbsences() { calls += 1; return calls === 1 ? [{ attendance: {} }] : []; } } });
   assert.deepEqual(handlers.expirePendingAbsences(), { processed: 1, succeeded: 1, failed: 0 });
   assert.deepEqual(handlers.expirePendingAbsences(), { processed: 0, succeeded: 0, failed: 0 });
 });
 
 test('TRIGGER_COMMUNICATION_IDEMPOTENCY_TEST summarizes pending communications once', () => {
-  const handlers = createTriggerHandlers({ services: { communicationService: { sendPendingCommunications() { return [{ ok: true }, { ok: false }]; } } } });
+  const handlers = createTriggerHandlers({ commands: { sendPendingCommunications() { return [{ ok: true }, { ok: false }]; } } });
   assert.deepEqual(handlers.sendPendingCommunications(), { processed: 2, succeeded: 1, failed: 1 });
 });
 
 test('TRIGGER_PII_FREE_SUMMARY_TEST returns counts only', () => {
-  const result = createTriggerHandlers({ services: { communicationService: { sendPendingCommunications() { return [{ ok: false, email: 'family@example.invalid' }]; } } } }).sendPendingCommunications();
+  const result = createTriggerHandlers({ commands: { sendPendingCommunications() { return [{ ok: false, email: 'family@example.invalid' }]; } } }).sendPendingCommunications();
   assert.deepEqual(Object.keys(result).sort(), ['failed', 'processed', 'succeeded']);
+});
+
+test('TRIGGER_COMMAND_AUTHORITY_REQUIRED_TEST fails closed without commands', () => {
+  const handlers = createTriggerHandlers({});
+  assert.throws(() => handlers.expirePendingAbsences(), /TRIGGER_COMMAND_REQUIRED/);
+  assert.throws(() => handlers.sendPendingCommunications(), /TRIGGER_COMMAND_REQUIRED/);
+});
+
+test('TRIGGER_NO_SERVICE_BYPASS_TEST ignores mutable services fallback', () => {
+  const handlers = createTriggerHandlers({ services: { communicationService: { sendPendingCommunications() { return [{ ok: true }]; } } } });
+  assert.throws(() => handlers.sendPendingCommunications(), /TRIGGER_COMMAND_REQUIRED/);
 });
 
 test('GLOBAL_SETUP_IDEMPOTENCY_TEST creates all operational sheets', () => {
