@@ -22,7 +22,8 @@ Reglas:
 - Si la config deshabilita el tipo, el mensaje conserva su estado real y no se invoca el adapter.
 - Antes de llamar el provider se persiste `ESTADO = ERROR`, `ERROR = DELIVERY_ATTEMPT_IN_PROGRESS` e `INTENTOS += 1`.
 - Si el provider falla, se guarda error sanitizado como retry explícito.
-- Si el provider tuvo éxito pero no se puede persistir `ENVIADO`, el comando falla con `COMMUNICATION_DELIVERY_STATE_UNCERTAIN`; ese marker bloquea auto-retry y retry normal.
+- Si el provider tuvo éxito pero no se puede persistir `ENVIADO`, el resultado queda como `uncertain` con codigo `COMMUNICATION_DELIVERY_STATE_UNCERTAIN`; ese marker bloquea auto-retry y retry normal.
+- En batches, cada mensaje procesado devuelve resultado estructurado. La bitacora registra las transiciones persistidas, incluyendo `PENDIENTE -> ERROR` para incertidumbre, sin afirmar entrega negativa.
 - Errores de envío se sanitizan antes de persistir.
 - `ASISTENCIAS.COMUNICACION_ID` es puntero resumen legacy; la relación canónica es `COMUNICACIONES.REFERENCIA_ID`.
 - Si el correo se entrega y falla la actualización del puntero resumen, la comunicación queda `ENVIADO` con warning `COMMUNICATION_SUMMARY_POINTER_FAILED`; no se convierte en `ERROR` para evitar reenvío duplicado.

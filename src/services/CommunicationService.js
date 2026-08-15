@@ -267,7 +267,12 @@ function createCommunicationService(dependencies) {
       try {
         communicationRepository.updateById('COMUNICACION_ID', record.COMUNICACION_ID, normalizeCommunication(next));
       } catch (persistError) {
-        throw utils.createDomainError('COMMUNICATION_DELIVERY_STATE_UNCERTAIN', record.COMUNICACION_ID);
+        return {
+          ok: false,
+          uncertain: true,
+          code: 'COMMUNICATION_DELIVERY_STATE_UNCERTAIN',
+          communication: normalizeCommunication(attempt)
+        };
       }
       try {
         markAbsenceSummaryPointer(next);
@@ -276,9 +281,6 @@ function createCommunicationService(dependencies) {
       }
       return { ok: true, communication: next };
     } catch (error) {
-      if (String(error && error.message ? error.message : error).indexOf('COMMUNICATION_DELIVERY_STATE_UNCERTAIN') !== -1) {
-        throw error;
-      }
       next.ESTADO = 'ERROR';
       next.ERROR = sanitizeError(error);
       next.INTENTOS = attempt.INTENTOS;

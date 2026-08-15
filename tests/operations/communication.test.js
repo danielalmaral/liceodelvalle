@@ -9,7 +9,10 @@ require('../../src/domain/MatchContracts');
 const { createConfigService } = require('../../src/config/ConfigService');
 const { createMatchService } = require('../../src/services/MatchService');
 const { createCommunicationService } = require('../../src/services/CommunicationService');
+const { createAuditService } = require('../../src/services/AuditService');
+const { createOperationalCommandService } = require('../../src/services/OperationalCommandService');
 const { createAppsScriptMailAdapter } = require('../../src/adapters/AppsScriptMailAdapter');
+const { createTriggerHandlers } = require('../../src/triggers/TriggerHandlers');
 const { completeConfigRows } = require('../config/config-fixtures');
 
 function config(overrides = {}) {
@@ -292,7 +295,10 @@ test('COMMUNICATION_STATE_PERSISTENCE_FAILURE_NO_RESEND_TEST blocks auto resend 
     tutorRepository: createArrayRepository([tutor()]),
     utils
   });
-  assert.throws(() => svc.sendPendingCommunications(), /COMMUNICATION_DELIVERY_STATE_UNCERTAIN/);
+  const result = svc.sendPendingCommunications()[0];
+  assert.equal(result.ok, false);
+  assert.equal(result.uncertain, true);
+  assert.equal(result.code, 'COMMUNICATION_DELIVERY_STATE_UNCERTAIN');
   assert.equal(rows[0].ERROR, 'DELIVERY_ATTEMPT_IN_PROGRESS');
   assert.equal(svc.sendPendingCommunications().length, 0);
   assert.equal(sent, 1);
@@ -344,4 +350,109 @@ test('COMMUNICATION_RECIPIENT_VALIDATION_TEST rejects invalid recipient', () => 
 
 test('COMMUNICATION_ATTEMPTS_INTEGRITY_TEST rejects invalid attempts', () => {
   assert.throws(() => service({ communications: [communication({ INTENTOS: -1 })] }).service.getCommunications(), /COMMUNICATION_ATTEMPTS_INVALID/);
+});
+
+function functionalEvents(rows) {
+  return rows.filter((row) => row.ENTIDAD !== 'OPERACION');
+}
+
+function commandWithCommunicationRepository(communicationRepository, mailAdapter) {
+  const auditRows = [];
+  const communicationService = createCommunicationService({
+    attendanceRepository: createArrayRepository([attendance()]),
+    clock: { now: () => new Date('2026-02-01T12:00:00Z') },
+    communicationRepository,
+    configService: config(),
+    convocationRepository: createArrayRepository([convocation()]),
+    detailRepository: createArrayRepository([detail()]),
+    mailAdapter,
+    matchService: createMatchService({ matchRepository: createArrayRepository([match()]), utils }),
+    studentRepository: createArrayRepository([student()]),
+    tutorRepository: createArrayRepository([tutor()]),
+    utils
+  });
+  return {
+    auditRows,
+    command: createOperationalCommandService({
+      idGenerator: { operationId: () => 'OP-COM-BATCH' },
+      repositories: { communicationRepository },
+      services: {
+        auditService: createAuditService({ auditRepository: createArrayRepository(auditRows), utils }),
+        communicationService
+      },
+      utils
+    }),
+    communicationService
+  };
+}
+
+test('AUDIT_COMMUNICATION_UNCERTAIN_STATE_TEST records uncertain state transition', () => {
+  let sent = 0;
+  const rows = [communication()];
+  const communicationRepository = {
+    getAll() { return rows; },
+    updateById(idField, id, nextRecord) {
+      if (nextRecord.ESTADO === 'ENVIADO') {
+        throw new Error('persist failed');
+      }
+      rows[0] = nextRecord;
+      return nextRecord;
+    }
+  };
+  const state = commandWithCommunicationRepository(communicationRepository, { send() { sent += 1; } });
+  const result = state.command.sendPendingCommunications({ operationId: 'OP-UNCERTAIN' });
+  const event = functionalEvents(state.auditRows)[0];
+
+  assert.equal(result[0].uncertain, true);
+  assert.equal(rows[0].ESTADO, 'ERROR');
+  assert.equal(rows[0].ERROR, 'DELIVERY_ATTEMPT_IN_PROGRESS');
+  assert.equal(event.VALOR_ANTERIOR, 'PENDIENTE');
+  assert.equal(event.VALOR_NUEVO, 'ERROR');
+  assert.equal(state.communicationService.sendPendingCommunications().length, 0);
+  assert.equal(sent, 1);
+});
+
+test('COMMUNICATION_BATCH_PARTIAL_UNCERTAINTY_AUDIT_TEST keeps all persisted transitions auditable', () => {
+  const rows = [
+    communication({ COMUNICACION_ID: 'COM-001' }),
+    communication({ COMUNICACION_ID: 'COM-002', TUTOR_ID: 'TUT-002', DESTINATARIO: 'second@example.invalid' })
+  ];
+  const communicationRepository = {
+    getAll() { return rows; },
+    updateById(idField, id, nextRecord) {
+      const index = rows.findIndex((row) => row.COMUNICACION_ID === id);
+      if (id === 'COM-002' && nextRecord.ESTADO === 'ENVIADO') {
+        throw new Error('persist failed');
+      }
+      rows[index] = nextRecord;
+      return nextRecord;
+    }
+  };
+  const state = commandWithCommunicationRepository(communicationRepository, { send() {} });
+  const result = state.command.sendPendingCommunications({ operationId: 'OP-PARTIAL' });
+  const events = functionalEvents(state.auditRows).sort((a, b) => a.ENTIDAD_ID.localeCompare(b.ENTIDAD_ID));
+
+  assert.equal(result.length, 2);
+  assert.equal(rows[0].ESTADO, 'ENVIADO');
+  assert.equal(rows[1].ESTADO, 'ERROR');
+  assert.equal(rows[1].ERROR, 'DELIVERY_ATTEMPT_IN_PROGRESS');
+  assert.equal(events.length, 2);
+  assert.deepEqual(events.map((event) => event.VALOR_NUEVO), ['ENVIADO', 'ERROR']);
+  assert.equal(state.communicationService.sendPendingCommunications().length, 0);
+});
+
+test('COMMUNICATION_UNCERTAIN_TRIGGER_SUMMARY_TEST counts uncertainty as failed without PII', () => {
+  const handlers = createTriggerHandlers({
+    commands: {
+      sendPendingCommunications() {
+        return [
+          { ok: true, communication: { COMUNICACION_ID: 'COM-001' } },
+          { ok: false, uncertain: true, code: 'COMMUNICATION_DELIVERY_STATE_UNCERTAIN', communication: { COMUNICACION_ID: 'COM-002' } }
+        ];
+      }
+    }
+  });
+  const summary = handlers.sendPendingCommunications();
+  assert.deepEqual(summary, { processed: 2, succeeded: 1, failed: 1 });
+  assert.deepEqual(Object.keys(summary).sort(), ['failed', 'processed', 'succeeded']);
 });

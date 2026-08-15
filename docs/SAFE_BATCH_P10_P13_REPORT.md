@@ -26,6 +26,13 @@ Correctivo 02 aplicado:
 - Auditoria con conflicto por `EVENTO_ID`, redaccion de campos sensibles y eventos por campo cambiado.
 - Readiness y rachas de participacion endurecidas con booleanos canonicos y cronologia completa.
 
+Correctivo 03 aplicado:
+
+- Runtime publico sin `repositories`; los repositories permanecen internos al composition root.
+- Replays auditados basados en firma canonica durable de intencion, no en eventos reconstruidos desde estado mutable.
+- Batch de comunicaciones conserva resultados parciales auditables ante incertidumbre de entrega.
+- Facade de rotacion conserva firma `(studentId, competition)` y `generateConvocation` preserva `actor`.
+
 No ejecuta recursos reales:
 
 - Sin Spreadsheet productivo.
