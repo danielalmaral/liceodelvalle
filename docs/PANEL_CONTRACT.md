@@ -1,6 +1,6 @@
 # Panel Contract
 
-P14 agrega `PANEL` como interfaz operativa para el piloto. El panel no es fuente de verdad.
+P14 agrega `PANEL` como interfaz operativa para el piloto. El panel no es fuente de verdad y se despliega como sidebar HtmlService en Apps Script container-bound al Spreadsheet.
 
 ## Autoridad
 
@@ -19,7 +19,7 @@ P14 agrega `PANEL` como interfaz operativa para el piloto. El panel no es fuente
 
 ## UI
 
-La UI usa HtmlService sin framework, CDN ni librerias externas. La hoja `PANEL` solo contiene layout/branding/ayuda. La sidebar principal se llama `Liceo del Valle - Futbol`.
+La UI usa HtmlService sin framework, CDN ni librerias externas. La hoja `PANEL` solo contiene layout/branding/ayuda. La sidebar principal se llama `Liceo del Valle - Futbol` y se abre con `SpreadsheetApp.getUi().showSidebar(...)` desde el Spreadsheet container.
 
 ## Privacidad
 

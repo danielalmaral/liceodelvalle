@@ -1,6 +1,6 @@
 # Apps Script Bootstrap Contract
 
-P14 prepara adapters reales para Apps Script sin ejecutar Google real durante desarrollo local.
+P14 prepara adapters reales para Apps Script container-bound sin ejecutar Google real durante desarrollo local.
 
 ## Environment
 
@@ -9,6 +9,7 @@ P14 prepara adapters reales para Apps Script sin ejecutar Google real durante de
 - `LDV_SPREADSHEET_ID` es obligatorio para crear runtime.
 - `LDV_EXTERNAL_MAIL_ENABLED` debe ser `TRUE` para permitir correo externo.
 - Cualquier otro valor mantiene correo deshabilitado.
+- En despliegue P15, el Apps Script está ligado al Spreadsheet de smoke; `clasp` debe apuntar al `scriptId` de ese contenedor.
 
 ## Lock
 
@@ -25,3 +26,5 @@ P14 prepara adapters reales para Apps Script sin ejecutar Google real durante de
 ## Runtime
 
 `createLdvAppsScriptRuntime()` compone environment, lock, repositories, id generator, mail guard y runtime. No debe ejecutarse al cargar archivo. Ningun adapter real se invoca durante bootstrap salvo cuando un handler solicita runtime.
+
+La UI del panel se abre con `SpreadsheetApp.getUi().showSidebar(...)` desde el contenedor del Spreadsheet. No hay otro target de publicación para P15.

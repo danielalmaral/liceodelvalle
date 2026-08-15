@@ -11,6 +11,7 @@ Fase: `LDV-PILOT-P14-PANEL-APPSSCRIPT-READINESS-01`
 - Adapters Apps Script lazy.
 - Handlers de panel sobre `runtime.commands`.
 - Smoke local con fakes.
+- Target de panel definido como Apps Script container-bound al Spreadsheet.
 
 ## No Ejecutado
 
@@ -20,6 +21,7 @@ Fase: `LDV-PILOT-P14-PANEL-APPSSCRIPT-READINESS-01`
 - Triggers reales.
 - Datos reales.
 - Merge a main.
+- Despliegue fuera del Spreadsheet container.
 
 ## Deuda No Bloqueante
 

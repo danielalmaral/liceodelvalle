@@ -1,6 +1,6 @@
 # P14 Operational Workflow
 
-P14 habilita operacion diaria con datos ficticios y fakes locales.
+P14 habilita operacion diaria con datos ficticios y fakes locales. El panel certificado para la siguiente fase es una sidebar HtmlService container-bound al Spreadsheet.
 
 ## Flujo Cubierto
 
@@ -27,4 +27,4 @@ P14 habilita operacion diaria con datos ficticios y fakes locales.
 
 ## Limites
 
-No usa datos reales, Spreadsheet real, `clasp push`, MailApp real ni triggers productivos. El correo externo permanece deshabilitado.
+No usa datos reales, Spreadsheet real, `clasp push`, MailApp real ni triggers productivos. El correo externo permanece deshabilitado. P15 debera crear un Spreadsheet ficticio y ligar el Apps Script a ese contenedor antes de ejecutar el smoke controlado.

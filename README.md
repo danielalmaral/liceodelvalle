@@ -2,7 +2,7 @@
 
 Bootstrap técnico para el piloto de fútbol del Liceo del Valle.
 
-Este repositorio contiene código y documentación base para una futura solución ligera en Google Apps Script standalone, con desarrollo modular y preparación para `clasp`.
+Este repositorio contiene código y documentación base para una futura solución ligera en Google Sheets con Apps Script container-bound, con desarrollo modular y preparación para `clasp` sobre el `scriptId` ligado al Spreadsheet.
 
 ## Estado
 
@@ -18,7 +18,7 @@ El safe batch P6-P9 agrega partidos, elegibilidad, rotación y motor determinist
 
 El safe batch P10-P13 agrega participación post-partido, comunicaciones persistidas, bitácora append-only y runtime/repository para Google Sheets con adapters fake en tests. No instala triggers, no envía correos reales, no crea Spreadsheet real y no implementa panel.
 
-P14 agrega la superficie operativa del piloto: comandos para sesiones, partidos y estado deportivo, panel Apps Script como UI de lectura/acciones, adapters reales lazy para Apps Script, hoja `PANEL` como landing no autoritativa y un smoke harness local con fakes. No ejecuta Google real, no hace `clasp push`, no instala triggers y no envía correo real.
+P14 agrega la superficie operativa del piloto: comandos para sesiones, partidos y estado deportivo, panel Apps Script como UI de lectura/acciones en el contenedor del Spreadsheet, adapters reales lazy para Apps Script, hoja `PANEL` como landing no autoritativa y un smoke harness local con fakes. No ejecuta Google real, no hace `clasp push`, no instala triggers y no envía correo real.
 
 ## Contratos
 

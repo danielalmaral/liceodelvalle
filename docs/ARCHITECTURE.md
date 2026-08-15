@@ -10,7 +10,7 @@
 
 ## Apps Script
 
-El proyecto se prepara como Google Apps Script standalone con runtime V8, desarrollo modular y futura integración con `clasp`.
+El proyecto se prepara como Google Sheets + Apps Script container-bound con runtime V8, desarrollo modular y futura integración con `clasp` usando el `scriptId` ligado al Spreadsheet de pruebas o piloto.
 
 ## Capas
 
@@ -57,3 +57,5 @@ P14 agrega una superficie operativa para el piloto sin cambiar las reglas deport
 `PanelHandlers` traduce entradas de HtmlService hacia comandos runtime y genera `operationId` en servidor. El navegador no puede imponer IDs de operación. Los errores devueltos al panel son sanitizados y no incluyen stack traces ni datos sensibles.
 
 `AppsScriptEnvironmentAdapter`, `AppsScriptLockAdapter`, `AppsScriptRepositoryFactory`, `AppsScriptIdGenerator` y `createLdvAppsScriptRuntime` resuelven APIs Google de forma lazy. Ningún archivo abre Spreadsheet, usa LockService, llama MailApp ni lee Script Properties al cargarse.
+
+El target de despliegue del panel es la sidebar HtmlService dentro del Spreadsheet container. El core sigue desacoplado mediante adapters y repositories inyectados; `LDV_SPREADSHEET_ID` permanece explícito para que el runtime abra el Spreadsheet autorizado, aunque el script esté ligado a ese mismo contenedor.

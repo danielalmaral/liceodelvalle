@@ -8,9 +8,9 @@ El trabajo se limita a `danielalmaral/liceodelvalle` en `C:\Users\danie\liceodel
 
 Como el repositorio remoto inicia vacío, el commit inicial de bootstrap se realiza directamente sobre `main`. Las fases posteriores deberán usar ramas específicas.
 
-## ADR-003: Apps Script Standalone
+## ADR-003: Apps Script Container-Bound
 
-El piloto se prepara para Google Apps Script standalone con runtime V8 y futura integración con `clasp`.
+El piloto se prepara para Google Sheets + Apps Script container-bound con runtime V8 y futura integración con `clasp` usando el `scriptId` ligado al Spreadsheet.
 
 ## ADR-004: Config como Autoridad Operativa
 
