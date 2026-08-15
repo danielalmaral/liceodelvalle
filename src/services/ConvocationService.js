@@ -28,6 +28,14 @@ function createConvocationService(dependencies) {
     }
   }
 
+  function normalizeHistoryBoolean(value, fieldName) {
+    try {
+      return utils.normalizeStrictBoolean(value, fieldName);
+    } catch (error) {
+      throw utils.createDomainError('CONVOCATION_HISTORY_BOOLEAN_INVALID', fieldName);
+    }
+  }
+
   function normalizeOptionalText(value) {
     return utils.optionalText(value);
   }
@@ -106,7 +114,7 @@ function createConvocationService(dependencies) {
     });
 
     return detailRepository.getAll().filter(function(detail) {
-      return historical[detail.CONVOCATORIA_ID] && detail.ALUMNO_ID === studentId && detail.SELECCIONADO_FINAL;
+      return historical[detail.CONVOCATORIA_ID] && detail.ALUMNO_ID === studentId && normalizeHistoryBoolean(detail.SELECCIONADO_FINAL, 'SELECCIONADO_FINAL');
     }).length;
   }
 
@@ -299,6 +307,41 @@ function createConvocationService(dependencies) {
     }
 
     return values.join('|');
+  }
+
+  function rebuildCanonicalRecommendation(convocation, details) {
+    var snapshots = {
+      total: Number(convocation.TOTAL_OBJETIVO),
+      minPo: Number(convocation.MIN_PORTEROS_SNAPSHOT),
+      minDef: Number(convocation.MIN_DEFENSAS_SNAPSHOT),
+      minMed: Number(convocation.MIN_MEDIOS_SNAPSHOT),
+      minDel: Number(convocation.MIN_DELANTEROS_SNAPSHOT)
+    };
+    var rebuilt = details.map(function(detail) {
+      var nextDetail = copyRecord(detail);
+      nextDetail.RECOMENDADO_SISTEMA = false;
+      nextDetail.SELECCIONADO_FINAL = false;
+      nextDetail.POSICION_ASIGNADA = '';
+      nextDetail.CAMBIO_MANUAL = false;
+      nextDetail.MOTIVO_CAMBIO = '';
+      nextDetail.ROTATION_EXCEPTION = false;
+      nextDetail.ORDEN_PRIORIDAD = '';
+      return nextDetail;
+    });
+    var byStudent = {};
+
+    selectRecommended(rebuilt, snapshots, convocation.COMPETENCIA);
+
+    rebuilt.forEach(function(detail) {
+      byStudent[detail.ALUMNO_ID] = {
+        ordenPrioridad: detail.ORDEN_PRIORIDAD,
+        posicionAsignada: detail.POSICION_ASIGNADA,
+        recomendadoSistema: detail.RECOMENDADO_SISTEMA,
+        seleccionadoFinal: detail.SELECCIONADO_FINAL
+      };
+    });
+
+    return byStudent;
   }
 
   function generateConvocation(matchId, actor) {
@@ -553,6 +596,44 @@ function createConvocationService(dependencies) {
     });
   }
 
+  function hasReason(detail) {
+    return utils.optionalText(detail.MOTIVO_CAMBIO) !== '';
+  }
+
+  function assertCanonicalRecommendation(convocation, details) {
+    var canonical = rebuildCanonicalRecommendation(convocation, details);
+
+    details.forEach(function(detail) {
+      var expected = canonical[detail.ALUMNO_ID];
+      var isEligible = detail.ELEGIBILITY_STATUS === 'ELIGIBLE';
+      var selectionChanged;
+      var positionChanged;
+
+      if (!expected) {
+        throw utils.createDomainError('CONVOCATION_STALE_PROPOSAL', detail.ALUMNO_ID);
+      }
+
+      if (detail.RECOMENDADO_SISTEMA !== expected.recomendadoSistema) {
+        throw utils.createDomainError('CONVOCATION_SYSTEM_RECOMMENDATION_CORRUPTED', detail.ALUMNO_ID);
+      }
+
+      if (isEligible && Number(detail.ORDEN_PRIORIDAD) !== Number(expected.ordenPrioridad)) {
+        throw utils.createDomainError('CONVOCATION_PRIORITY_ORDER_CORRUPTED', detail.ALUMNO_ID);
+      }
+
+      if (!isEligible && detail.ORDEN_PRIORIDAD !== '' && detail.ORDEN_PRIORIDAD !== null && detail.ORDEN_PRIORIDAD !== undefined) {
+        throw utils.createDomainError('CONVOCATION_PRIORITY_ORDER_CORRUPTED', detail.ALUMNO_ID);
+      }
+
+      selectionChanged = detail.SELECCIONADO_FINAL !== expected.seleccionadoFinal;
+      positionChanged = expected.seleccionadoFinal && detail.SELECCIONADO_FINAL && detail.POSICION_ASIGNADA !== expected.posicionAsignada;
+
+      if ((selectionChanged || positionChanged) && (!detail.CAMBIO_MANUAL || !hasReason(detail))) {
+        throw utils.createDomainError('CONVOCATION_MANUAL_CHANGE_NOT_DECLARED', detail.ALUMNO_ID);
+      }
+    });
+  }
+
   function assertCurrentAuthority(convocation, details) {
     var currentByStudent = {};
     var studentById = {};
@@ -639,6 +720,7 @@ function createConvocationService(dependencies) {
     assertNoPreviousAuthoritativeForMatch(convocation);
     assertDetailIntegrity(convocation, details);
     assertCurrentAuthority(convocation, details);
+    assertCanonicalRecommendation(convocation, details);
     assertFiNotConsumedTwice(convocation, details);
 
     var selected = details.filter(function(detail) { return detail.SELECCIONADO_FINAL; });

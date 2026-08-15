@@ -939,6 +939,96 @@ test('CONVOCATION_PRIORITY_ORDER_REPOSITORY_INVARIANT_TEST ranking ignores repos
   assert.deepEqual(order, ['1:ALU-DEF', '2:ALU-DEL', '3:ALU-MED', '4:ALU-PO']);
 });
 
+test('CONVOCATION_DIRECT_SELECTION_TAMPER_REJECTED_TEST rejects undeclared direct selection swap', () => {
+  const state = service({ configService: config({ CONVOCADOS_A: '4' }), students: [...baseStudents(), student('ALU-FLEX', 'DEF')] });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  const details = state.detailRepository.getAll();
+  const selected = details.find((detail) => detail.ALUMNO_ID === 'ALU-DEF');
+  const flex = details.find((detail) => detail.ALUMNO_ID === 'ALU-FLEX');
+  state.detailRepository.updateById('DETALLE_ID', selected.DETALLE_ID, { ...selected, SELECCIONADO_FINAL: false, POSICION_ASIGNADA: '', CAMBIO_MANUAL: false, MOTIVO_CAMBIO: '' });
+  state.detailRepository.updateById('DETALLE_ID', flex.DETALLE_ID, { ...flex, SELECCIONADO_FINAL: true, POSICION_ASIGNADA: 'DEF', CAMBIO_MANUAL: false, MOTIVO_CAMBIO: '' });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_MANUAL_CHANGE_NOT_DECLARED/);
+});
+
+test('CONVOCATION_DIRECT_SELECTION_TAMPER_WITH_REASON_TEST allows declared direct selection swap', () => {
+  const state = service({ configService: config({ CONVOCADOS_A: '4' }), students: [...baseStudents(), student('ALU-FLEX', 'DEF')] });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  const details = state.detailRepository.getAll();
+  const selected = details.find((detail) => detail.ALUMNO_ID === 'ALU-DEF');
+  const flex = details.find((detail) => detail.ALUMNO_ID === 'ALU-FLEX');
+  state.detailRepository.updateById('DETALLE_ID', selected.DETALLE_ID, { ...selected, SELECCIONADO_FINAL: false, POSICION_ASIGNADA: '', CAMBIO_MANUAL: true, MOTIVO_CAMBIO: 'Decision ficticia' });
+  state.detailRepository.updateById('DETALLE_ID', flex.DETALLE_ID, { ...flex, SELECCIONADO_FINAL: true, POSICION_ASIGNADA: 'DEF', CAMBIO_MANUAL: true, MOTIVO_CAMBIO: 'Decision ficticia' });
+  assert.equal(state.convocationService.approveConvocation('CON-NEW', 'coach').ESTADO, 'APROBADA');
+});
+
+test('CONVOCATION_RECOMMENDATION_FLAG_TAMPER_TEST rejects changed recommendation flag', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  const detail = state.detailRepository.getAll().find((row) => row.ALUMNO_ID === 'ALU-DEF');
+  state.detailRepository.updateById('DETALLE_ID', detail.DETALLE_ID, { ...detail, RECOMENDADO_SISTEMA: false });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_SYSTEM_RECOMMENDATION_CORRUPTED/);
+});
+
+test('CONVOCATION_PRIORITY_ORDER_TAMPER_TEST rejects changed priority order', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  const detail = state.detailRepository.getAll().find((row) => row.ALUMNO_ID === 'ALU-DEF');
+  state.detailRepository.updateById('DETALLE_ID', detail.DETALLE_ID, { ...detail, ORDEN_PRIORIDAD: 99 });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_PRIORITY_ORDER_CORRUPTED/);
+});
+
+test('CONVOCATION_DIRECT_POSITION_TAMPER_REJECTED_TEST rejects undeclared direct position change', () => {
+  const state = service({ configService: config({ CONVOCADOS_A: '5' }), students: [...baseStudents({ 'ALU-PO': { POSICION_SECUNDARIA: 'DEF' } }), student('ALU-ALT-PO', 'PO')] });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  const detail = state.detailRepository.getAll().find((row) => row.ALUMNO_ID === 'ALU-PO');
+  state.detailRepository.updateById('DETALLE_ID', detail.DETALLE_ID, { ...detail, POSICION_ASIGNADA: 'DEF', CAMBIO_MANUAL: false, MOTIVO_CAMBIO: '' });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_MANUAL_CHANGE_NOT_DECLARED/);
+});
+
+test('CONVOCATION_DIRECT_POSITION_TAMPER_WITH_REASON_TEST allows declared direct position change', () => {
+  const state = service({ configService: config({ CONVOCADOS_A: '5' }), students: [...baseStudents({ 'ALU-PO': { POSICION_SECUNDARIA: 'DEF' } }), student('ALU-ALT-PO', 'PO')] });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  const detail = state.detailRepository.getAll().find((row) => row.ALUMNO_ID === 'ALU-PO');
+  state.detailRepository.updateById('DETALLE_ID', detail.DETALLE_ID, { ...detail, POSICION_ASIGNADA: 'DEF', CAMBIO_MANUAL: true, MOTIVO_CAMBIO: 'Decision ficticia' });
+  assert.equal(state.convocationService.approveConvocation('CON-NEW', 'coach').ESTADO, 'APROBADA');
+});
+
+test('CONVOCATION_RECOMMENDATION_REBUILD_REPOSITORY_ORDER_TEST rebuilds recommendation independent of repository order', () => {
+  const students = baseStudents();
+  const details = [];
+  const state = service({ students, details });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.studentRepository.setRows(students.slice().reverse());
+  state.detailRepository.setRows(details.slice().reverse());
+  assert.equal(state.convocationService.approveConvocation('CON-NEW', 'coach').ESTADO, 'APROBADA');
+});
+
+test('CONVOCATION_PRIOR_COUNT_FALSE_STRING_TEST does not count FALSE selected history', () => {
+  const result = generate({
+    matches: [match(), match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' })],
+    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'A', ESTADO: 'APROBADA' }],
+    details: [{ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-DEF', COMPETENCIA_SNAPSHOT: 'A', ELEGIBILITY_STATUS: 'ELIGIBLE', SELECCIONADO_FINAL: 'FALSE' }]
+  });
+  assert.equal(result.details.find((detail) => detail.ALUMNO_ID === 'ALU-DEF').TOTAL_CONVOCATORIAS_PREVIAS, 0);
+});
+
+test('CONVOCATION_PRIOR_COUNT_TRUE_STRING_TEST counts TRUE selected history', () => {
+  const result = generate({
+    matches: [match(), match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' })],
+    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'A', ESTADO: 'APROBADA' }],
+    details: [{ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-DEF', COMPETENCIA_SNAPSHOT: 'A', ELEGIBILITY_STATUS: 'ELIGIBLE', SELECCIONADO_FINAL: 'TRUE' }]
+  });
+  assert.equal(result.details.find((detail) => detail.ALUMNO_ID === 'ALU-DEF').TOTAL_CONVOCATORIAS_PREVIAS, 1);
+});
+
+test('CONVOCATION_PRIOR_COUNT_INVALID_BOOLEAN_TEST rejects invalid selected history', () => {
+  assert.throws(() => generate({
+    matches: [match(), match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' })],
+    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'A', ESTADO: 'APROBADA' }],
+    details: [{ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-DEF', COMPETENCIA_SNAPSHOT: 'A', ELEGIBILITY_STATUS: 'ELIGIBLE', SELECCIONADO_FINAL: 'yes' }]
+  }), /CONVOCATION_HISTORY_BOOLEAN_INVALID/);
+});
+
 test('CONVOCATION_SETUP_IDEMPOTENCY_TEST creates competition sheets idempotently', () => {
   const spreadsheet = fakeSpreadsheet();
   assert.equal(setupCompetitionSheets(spreadsheet, setupSheetWithHeaders), true);

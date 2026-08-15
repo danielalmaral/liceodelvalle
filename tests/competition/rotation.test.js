@@ -188,3 +188,15 @@ test('ROTATION_SAME_DATE_DETERMINISTIC_TEST uses time and PARTIDO_ID tie-breaker
   ];
   assert.equal(service({ matches, convocations, details }).getRotationBefore('ALU-001', 'A'), 0);
 });
+
+test('ROTATION_HISTORY_FALSE_STRING_TEST treats FALSE as unselected', () => {
+  assert.equal(service({ convocations: [convocation()], details: [detail({ SELECCIONADO_FINAL: 'FALSE' })] }).getRotationBefore('ALU-001', 'A'), 1);
+});
+
+test('ROTATION_HISTORY_TRUE_STRING_TEST treats TRUE as selected', () => {
+  assert.equal(service({ convocations: [convocation()], details: [detail({ SELECCIONADO_FINAL: 'TRUE' })] }).getRotationBefore('ALU-001', 'A'), 0);
+});
+
+test('ROTATION_HISTORY_INVALID_BOOLEAN_TEST rejects invalid history boolean', () => {
+  assert.throws(() => service({ convocations: [convocation()], details: [detail({ SELECCIONADO_FINAL: 'yes' })] }).getRotationBefore('ALU-001', 'A'), /CONVOCATION_HISTORY_BOOLEAN_INVALID/);
+});

@@ -5,6 +5,14 @@ function createRotationService(dependencies) {
   var detailRepository = dependencies.detailRepository;
   var matchService = dependencies.matchService;
 
+  function normalizeHistoryBoolean(value, fieldName) {
+    try {
+      return utils.normalizeStrictBoolean(value, fieldName);
+    } catch (error) {
+      throw utils.createDomainError('CONVOCATION_HISTORY_BOOLEAN_INVALID', fieldName);
+    }
+  }
+
   function isHistoricalConvocation(convocation) {
     if (['APROBADA', 'ENVIADA', 'CERRADA'].indexOf(convocation.ESTADO) === -1) {
       return false;
@@ -44,7 +52,7 @@ function createRotationService(dependencies) {
         return detail.CONVOCATORIA_ID === convocation.CONVOCATORIA_ID && detail.ALUMNO_ID === studentId && detail.COMPETENCIA_SNAPSHOT === competition;
       }).forEach(function(detail) {
         if (detail.ELEGIBILITY_STATUS === 'ELIGIBLE') {
-          debt = detail.SELECCIONADO_FINAL ? 0 : debt + 1;
+          debt = normalizeHistoryBoolean(detail.SELECCIONADO_FINAL, 'SELECCIONADO_FINAL') ? 0 : debt + 1;
         }
       });
     });
@@ -78,8 +86,8 @@ function createRotationService(dependencies) {
   }
 
   function validatePriorityException(detail) {
-    if (detail.PRIORIDAD_ROTACION && !detail.SELECCIONADO_FINAL) {
-      if (!detail.ROTATION_EXCEPTION || !detail.MOTIVO_CAMBIO) {
+    if (normalizeHistoryBoolean(detail.PRIORIDAD_ROTACION, 'PRIORIDAD_ROTACION') && !normalizeHistoryBoolean(detail.SELECCIONADO_FINAL, 'SELECCIONADO_FINAL')) {
+      if (!normalizeHistoryBoolean(detail.ROTATION_EXCEPTION, 'ROTATION_EXCEPTION') || !detail.MOTIVO_CAMBIO) {
         throw utils.createDomainError('ROTATION_EXCEPTION_REASON_REQUIRED', detail.ALUMNO_ID);
       }
     }
