@@ -12,6 +12,8 @@ P0 establece estructura, reglas de trabajo, documentación y validaciones inicia
 
 P1 agrega la infraestructura canónica de configuración dinámica. `CONFIG` es la única fuente runtime para reglas operativas configurables; si una clave requerida falta, el sistema falla de forma explícita sin usar defaults ocultos.
 
+El safe batch P2-P5 agrega cimientos de alumnos, tutores, sesiones, asistencias, resolución de faltas y métricas. No crea recursos Google reales, no envía correos y no implementa convocatoria.
+
 ## Comandos
 
 ```bash

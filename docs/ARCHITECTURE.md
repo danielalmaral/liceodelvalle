@@ -29,3 +29,9 @@ El proyecto se prepara como Google Apps Script standalone con runtime V8, desarr
 ## Setup de CONFIG
 
 `ConfigSetup` prepara encabezados de la hoja `CONFIG` mediante un spreadsheet/adaptador recibido explícitamente. Es idempotente, no usa IDs reales y no destruye datos existentes.
+
+## P2-P5 Foundation
+
+Los módulos de alumnos, tutores, sesiones, asistencias, resolución de faltas y métricas son servicios puros con repositories/adapters inyectados. Las operaciones temporales aceptan reloj inyectable y los envíos de correo quedan como intents sin entrega real.
+
+Los snapshots `VALOR_APLICADO`, `VALOR_MAXIMO_APLICADO` y `LIMITE_JUSTIFICACION` preservan valores históricos aunque `CONFIG` cambie posteriormente.

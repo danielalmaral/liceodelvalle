@@ -31,3 +31,11 @@ Las claves runtime configurables deben resolverse desde `CONFIG`. Si una clave r
 ## ADR-008: Snapshot Historico Futuro
 
 Las fases futuras que apliquen reglas de `CONFIG` a eventos históricos deberán conservar el valor aplicado en el momento del evento para evitar recálculos retroactivos no autorizados.
+
+## ADR-009: Avisos Como Intent
+
+La ausencia puede preparar intents de comunicación para tutores elegibles, pero no envía correo ni persiste comunicaciones en P4.
+
+## ADR-010: Cumplimiento vs Presencia
+
+Cumplimiento usa snapshots de valor aplicado sobre valor máximo aplicado. Presencia física mide sólo asistencia real `A` y `R`.

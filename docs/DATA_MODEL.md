@@ -39,3 +39,11 @@ MODIFICADO_POR
 ```
 
 La hoja no se crea contra un Spreadsheet real en P1. Sólo se define el contrato y una rutina idempotente de setup para uso futuro.
+
+## ASISTENCIAS
+
+`ASISTENCIAS` incluye `VALOR_MAXIMO_APLICADO` como snapshot histórico del máximo posible al momento del evento. El estado `F` es pendiente y no tiene puntaje hasta resolverse en `FJ`, `LES` o `FI`.
+
+## COMUNICACIONES
+
+P4 sólo prepara intents de aviso de ausencia. La persistencia de `COMUNICACIONES` y el envío real permanecen diferidos.
