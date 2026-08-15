@@ -146,9 +146,9 @@ function createAppRenderer(dependencies) {
 
   function renderAttendance() {
     var view = state.attendance || { rows: [] };
-    var selected = selectedSessionId();
+    var selected = state.selectedSessionId || '';
     var viewSessionId = view.sessionId || (view.session && view.session.sesionId) || '';
-    var consistent = !viewSessionId || !selected || viewSessionId === selected;
+    var consistent = !!selected && !!viewSessionId && viewSessionId === selected;
     var session = consistent ? (view.session || {}) : {};
     var rows = consistent ? (view.rows || []) : [];
     var registered = rows.filter(function(row) { return row.estadoActual; }).length;
@@ -237,7 +237,7 @@ function createAppRenderer(dependencies) {
     var convocation = state.convocation || { details: [] };
     var canonicalConvocationId = convocationId(existing) || '';
     var loadedConvocationId = convocation.convocationId || '';
-    var consistent = !canonicalConvocationId || !loadedConvocationId || canonicalConvocationId === loadedConvocationId;
+    var consistent = !!canonicalConvocationId && !!loadedConvocationId && canonicalConvocationId === loadedConvocationId;
     var activeConvocationId = consistent && loadedConvocationId ? loadedConvocationId : '';
     var allDetails = consistent && activeConvocationId ? (convocation.details || []) : [];
     var details = filteredConvocationDetails(allDetails);

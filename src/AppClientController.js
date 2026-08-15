@@ -38,6 +38,18 @@ function createAppClientController(dependencies) {
     return all.filter(function(item) { return convocationMatchId(item) === matchId; })[0] || null;
   }
 
+  function matchIdForConvocation(convocationIdValue) {
+    var reference = state.referenceData || {};
+    var all = (reference.authoritativeConvocations || []).concat(reference.convocationProposals || []);
+    var found = all.filter(function(item) { return convocationId(item) === convocationIdValue; })[0] || null;
+    return convocationMatchId(found) || '';
+  }
+
+  function isCanonicalConvocationForMatch(convocationIdValue, matchId) {
+    var canonical = findConvocationForMatch(matchId);
+    return !!convocationIdValue && !!matchId && convocationId(canonical) === convocationIdValue;
+  }
+
   function selectedCompetition() {
     return state.selectedCompetition || 'ALL';
   }
@@ -257,7 +269,8 @@ function createAppClientController(dependencies) {
 
   function loadConvocation(convocationIdValue, existingToken, matchId) {
     var token = existingToken || nextEpoch('convocations');
-    var expectedMatchId = matchId || state.selectedProgrammedMatchId || '';
+    var owningMatchId = matchIdForConvocation(convocationIdValue);
+    var expectedMatchId = matchId || owningMatchId || state.selectedProgrammedMatchId || '';
     if (!convocationIdValue) {
       if (!isFresh(token, 'convocations')) return null;
       state.convocation = { convocationId: '', details: [] };
@@ -265,6 +278,12 @@ function createAppClientController(dependencies) {
       if (typeof render.route === 'function') {
         render.route('convocations');
       }
+      return null;
+    }
+    if (owningMatchId && state.selectedProgrammedMatchId && owningMatchId !== state.selectedProgrammedMatchId) {
+      return null;
+    }
+    if (expectedMatchId && !isCanonicalConvocationForMatch(convocationIdValue, expectedMatchId)) {
       return null;
     }
     return rpc('getPanelConvocation', [convocationIdValue], function(data) {
@@ -327,29 +346,39 @@ function createAppClientController(dependencies) {
   }
 
   function markAttendance(sessionId, studentId, attendanceState) {
+    var originRoute = state.activeRoute;
+    var originSessionId = sessionId;
     return rpc('commandCreateAttendance', [{ sesionId: sessionId, alumnoId: studentId, estado: attendanceState }], function() {
-      if (state.activeRoute !== 'attendance') {
-        return;
-      }
       if (typeof render.feedback === 'function') {
         render.feedback('Guardado');
       }
-      loadAttendance(sessionId);
+      loadAttendance(originSessionId);
+    }, {
+      isCurrent: function() {
+        return originRoute === 'attendance' &&
+          state.activeRoute === 'attendance' &&
+          state.selectedSessionId === originSessionId;
+      }
     });
   }
 
   function resolveAbsence(attendanceId, targetState, reason) {
+    var originRoute = state.activeRoute;
+    var originSessionId = state.selectedSessionId || '';
     if (targetState !== 'FJ' && targetState !== 'LES') {
       throw new Error('PANEL_CLIENT_ABSENCE_TARGET_REJECTED');
     }
     return rpc('commandResolveAbsence', [attendanceId, targetState, { reason: reason || '' }], function() {
-      if (state.activeRoute !== 'attendance') {
-        return;
-      }
       if (typeof render.feedback === 'function') {
         render.feedback('Guardado');
       }
-      loadAttendance(state.selectedSessionId);
+      loadAttendance(originSessionId);
+    }, {
+      isCurrent: function() {
+        return originRoute === 'attendance' &&
+          state.activeRoute === 'attendance' &&
+          state.selectedSessionId === originSessionId;
+      }
     });
   }
 
@@ -391,30 +420,66 @@ function createAppClientController(dependencies) {
   }
 
   function setFinalSelection(convocationId, studentId, selected, reason) {
+    var originRoute = state.activeRoute;
+    var originMatchId = state.selectedProgrammedMatchId || matchIdForConvocation(convocationId);
     return rpc('commandSetFinalSelection', [convocationId, studentId, selected, reason || ''], function() {
-      if (state.activeRoute === 'convocations') loadConvocation(convocationId);
+      loadConvocation(convocationId, undefined, originMatchId);
+    }, {
+      isCurrent: function() {
+        return originRoute === 'convocations' &&
+          state.activeRoute === 'convocations' &&
+          state.selectedProgrammedMatchId === originMatchId &&
+          isCanonicalConvocationForMatch(convocationId, originMatchId);
+      }
     });
   }
 
   function assignPosition(convocationId, studentId, position, reason) {
+    var originRoute = state.activeRoute;
+    var originMatchId = state.selectedProgrammedMatchId || matchIdForConvocation(convocationId);
     return rpc('commandAssignPosition', [convocationId, studentId, position, reason || ''], function() {
-      if (state.activeRoute === 'convocations') loadConvocation(convocationId);
+      loadConvocation(convocationId, undefined, originMatchId);
+    }, {
+      isCurrent: function() {
+        return originRoute === 'convocations' &&
+          state.activeRoute === 'convocations' &&
+          state.selectedProgrammedMatchId === originMatchId &&
+          isCanonicalConvocationForMatch(convocationId, originMatchId);
+      }
     });
   }
 
   function approveConvocation(convocationId, actor) {
+    var originRoute = state.activeRoute;
+    var originMatchId = state.selectedProgrammedMatchId || matchIdForConvocation(convocationId);
     var trimmedActor = String(actor || '').trim();
     if (!trimmedActor) {
       throw new Error('PANEL_APPROVAL_ACTOR_REQUIRED');
     }
     return rpc('commandApproveConvocation', [convocationId, trimmedActor], function() {
-      if (state.activeRoute === 'convocations') loadBootstrap('convocations');
+      loadBootstrap('convocations');
+    }, {
+      isCurrent: function() {
+        return originRoute === 'convocations' &&
+          state.activeRoute === 'convocations' &&
+          state.selectedProgrammedMatchId === originMatchId &&
+          isCanonicalConvocationForMatch(convocationId, originMatchId);
+      }
     });
   }
 
   function prepareConvocationCommunications(convocationId) {
+    var originRoute = state.activeRoute;
+    var originMatchId = state.selectedProgrammedMatchId || matchIdForConvocation(convocationId);
     return rpc('commandPrepareConvocationCommunications', [convocationId], function() {
-      if (state.activeRoute === 'convocations') loadBootstrap('convocations');
+      loadBootstrap('convocations');
+    }, {
+      isCurrent: function() {
+        return originRoute === 'convocations' &&
+          state.activeRoute === 'convocations' &&
+          state.selectedProgrammedMatchId === originMatchId &&
+          isCanonicalConvocationForMatch(convocationId, originMatchId);
+      }
     });
   }
 

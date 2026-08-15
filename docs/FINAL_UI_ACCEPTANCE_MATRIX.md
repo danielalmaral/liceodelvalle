@@ -50,6 +50,18 @@
 | Generate no secuestra ruta tras cambio de pantalla | IMPLEMENTED |
 | Pending de generate se libera en success y failure | IMPLEMENTED |
 
+## Corrective 04 Audit Closure
+
+| Hallazgo | Estado |
+| --- | --- |
+| Respuesta write de asistencia no revierte sesion | IMPLEMENTED |
+| Error stale de asistencia no aparece en otra sesion | IMPLEMENTED |
+| Respuesta write manual de convocatoria no carga convocatoria vieja | IMPLEMENTED |
+| Write viejo no invalida carga nueva de convocatoria | IMPLEMENTED |
+| Aprobacion y preparacion respetan contexto de partido | IMPLEMENTED |
+| `loadConvocation` valida identidad partido-convocatoria | IMPLEMENTED |
+| Renderers requieren matching estricto de entidad visible | IMPLEMENTED |
+
 ## Deferred
 
 - `BRAND_OFFICIAL_LOGO_ASSET_PENDING`

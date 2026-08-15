@@ -65,3 +65,9 @@ El selector global de competencia queda bajo `setCompetition(value)`, con valore
 El tercer correctivo cierra carreras de transicion UI sin ampliar producto. El cambio humano de partido limpia inmediatamente la convocatoria anterior antes de solicitar la nueva, y el renderer bloquea detalles y acciones cuando la convocatoria cargada no corresponde al partido seleccionado.
 
 El cambio humano de sesion de asistencia queda bajo `selectAttendanceSession(sessionId)`, que limpia filas anteriores durante el RPC y evita acciones sobre alumnos de otra sesion. La respuesta de `generateConvocation(matchId)` libera siempre el pending del intento, pero solo rehidrata Convocatorias o muestra errores si el usuario sigue en la misma ruta y partido.
+
+## Corrective 04
+
+El cuarto correctivo cierra seguridad de contexto para respuestas de escritura. Las operaciones de asistencia, resolucion de falta, seleccion manual, posicion, aprobacion y preparacion de comunicaciones solo refrescan o muestran errores si el usuario sigue en la misma entidad visible donde inicio la accion.
+
+`loadConvocation(convocationId)` valida la pertenencia de la convocatoria contra el partido seleccionado usando datos de referencia, y los renderers de Asistencia y Convocatorias requieren matching estricto antes de exponer filas, detalles o acciones interactivas.
