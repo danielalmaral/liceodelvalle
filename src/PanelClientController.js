@@ -15,10 +15,22 @@ function createPanelClientController(dependencies) {
     }
   }
 
+  function safeErrorMessage(response) {
+    var code = response && typeof response.code === 'string' ? response.code : '';
+    var message = 'No se pudo completar la operacion solicitada.';
+
+    if (/^[A-Z][A-Z0-9_]*$/.test(code)) {
+      return message + ' [' + code + ']';
+    }
+
+    return message;
+  }
+
   function onFailure(error) {
-    setState('error', 'No se pudo completar la operacion solicitada.');
+    var message = safeErrorMessage(error);
+    setState('error', message);
     if (typeof render.error === 'function') {
-      render.error('No se pudo completar la operacion solicitada.', error);
+      render.error(message);
     }
   }
 
@@ -29,6 +41,9 @@ function createPanelClientController(dependencies) {
         return;
       }
       setState('error', '');
+      if (typeof render.error === 'function') {
+        render.error('');
+      }
       setState(key, response.data);
       if (typeof renderer === 'function') {
         renderer(response.data);

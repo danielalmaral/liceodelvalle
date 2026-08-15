@@ -11,6 +11,22 @@ function createMasterDataService(dependencies) {
     return next;
   }
 
+  function normalizeGrade(value) {
+    if (typeof value === 'string') {
+      return utils.requireText(value, 'GRADO');
+    }
+
+    if (value === undefined || value === null) {
+      throw utils.createDomainError('REQUIRED_FIELD', 'GRADO');
+    }
+
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+
+    throw utils.createDomainError('INVALID_GRADE', 'GRADO');
+  }
+
   function normalizeStudent(row) {
     var alta = utils.parseDateValue(row.FECHA_ALTA, 'FECHA_ALTA');
     var baja = utils.parseOptionalDateValue(row.FECHA_BAJA, 'FECHA_BAJA');
@@ -24,7 +40,7 @@ function createMasterDataService(dependencies) {
       active: utils.normalizeStrictBoolean(row.ACTIVO, 'ACTIVO'),
       nombre: utils.requireText(row.NOMBRE, 'NOMBRE'),
       apellidos: utils.requireText(row.APELLIDOS, 'APELLIDOS'),
-      grado: utils.requireText(row.GRADO, 'GRADO'),
+      grado: normalizeGrade(row.GRADO),
       grupo: utils.optionalText(row.GRUPO),
       competenciaBase: utils.assertOneOf(row.COMPETENCIA_BASE, STUDENT_ENUMS.COMPETENCIA_BASE, 'COMPETENCIA_BASE'),
       nivel: utils.assertOneOf(row.NIVEL, STUDENT_ENUMS.NIVEL, 'NIVEL'),

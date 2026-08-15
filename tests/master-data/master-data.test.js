@@ -104,6 +104,26 @@ test('STUDENT_DATE_RANGE_TEST rejects baja before alta', () => {
   assert.throws(() => service([student({ FECHA_BAJA: '2025-12-31' })]).getStudents(), /INVALID_DATE_RANGE/);
 });
 
+test('MASTER_DATA_REAL_SHEETS_NUMERIC_GRADE_TEST', () => {
+  const result = service([student({ GRADO: 1, FECHA_ALTA: new Date(2026, 0, 1) })]).getStudents();
+  assert.equal(result[0].grado, '1');
+});
+
+test('MASTER_DATA_GRADE_STRING_COMPATIBILITY_TEST', () => {
+  assert.equal(service([student({ GRADO: '1' })]).getStudents()[0].grado, '1');
+  assert.equal(service([student({ GRADO: ' 1 ' })]).getStudents()[0].grado, '1');
+  assert.equal(service([student({ GRADO: 'PREPA' })]).getStudents()[0].grado, 'PREPA');
+});
+
+test('MASTER_DATA_GRADE_INVALID_TYPE_TEST', () => {
+  [true, false, new Date(2026, 0, 1), {}, [], NaN, Infinity].forEach((value) => {
+    assert.throws(() => service([student({ GRADO: value })]).getStudents(), /INVALID_GRADE: GRADO/);
+  });
+  [undefined, null, ''].forEach((value) => {
+    assert.throws(() => service([student({ GRADO: value })]).getStudents(), /REQUIRED_FIELD: GRADO/);
+  });
+});
+
 test('TUTOR_SCHEMA_TEST validates required tutor fields', () => {
   assert.equal(service().getTutors()[0].email, 'family@example.invalid');
   assert.throws(() => service([student()], [tutor({ NOMBRE_TUTOR: '' })]).getTutors(), /REQUIRED_FIELD: NOMBRE_TUTOR/);

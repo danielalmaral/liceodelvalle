@@ -473,6 +473,40 @@ test('PANEL_ATTENDANCE_VIEW_TEST', () => {
   assert.equal(view.rows[0].capabilities.canMarkAttendance, true);
 });
 
+test('PANEL_DASHBOARD_REAL_SHEETS_NUMERIC_GRADE_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.studentRepository = createArrayRepository([student({
+    GRADO: 1,
+    FECHA_ALTA: new Date(2026, 0, 1)
+  })]);
+  options.repositories.sessionRepository = createArrayRepository([session({
+    FECHA: new Date(2026, 1, 1),
+    HORA_INICIO: new Date(2000, 0, 1, 8, 0, 0, 0),
+    HORA_FIN: new Date(2000, 0, 1, 9, 0, 0, 0)
+  })]);
+
+  const dashboard = createAppsScriptRuntime(options).queries.getPanelDashboard();
+
+  assert.equal(dashboard.attendanceBySession[0].expected, 1);
+});
+
+test('PANEL_ATTENDANCE_REAL_SHEETS_NUMERIC_GRADE_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.studentRepository = createArrayRepository([student({
+    GRADO: 1,
+    FECHA_ALTA: new Date(2026, 0, 1)
+  })]);
+  options.repositories.sessionRepository = createArrayRepository([session({
+    FECHA: new Date(2026, 1, 1),
+    HORA_INICIO: new Date(2000, 0, 1, 8, 0, 0, 0),
+    HORA_FIN: new Date(2000, 0, 1, 9, 0, 0, 0)
+  })]);
+
+  const view = createAppsScriptRuntime(options).queries.getPanelAttendance('SES-001');
+
+  assert.equal(view.rows[0].studentId, 'ALU-001');
+});
+
 test('PANEL_CONVOCATION_VIEW_TEST', () => {
   const view = createAppsScriptRuntime(runtimeOptions()).queries.getPanelConvocation('CON-001');
   assert.equal(view.details[0].ELEGIBILITY_STATUS, 'ELIGIBLE');
@@ -2481,6 +2515,21 @@ function captureRpcController() {
   return { calls, controller };
 }
 
+function errorCaptureController(response) {
+  const errors = [];
+  const controller = createPanelClientController({
+    callServer(name, args, onSuccess) {
+      onSuccess(response);
+    },
+    render: {
+      error(message) {
+        errors.push(message);
+      }
+    }
+  });
+  return { controller, errors };
+}
+
 test('PANEL_CLIENT_ATTENDANCE_LOAD_SESSION_TEST', () => {
   const { calls, controller } = captureRpcController();
   controller.loadAttendance('SES-001');
@@ -2623,6 +2672,117 @@ test('PANEL_CLIENT_RPC_FAILURE_HANDLER_TEST', () => {
   }).loadDashboard();
   assert.equal(typeof failure, 'function');
   failure(new Error('STACK family@example.invalid'));
+});
+
+test('PANEL_CLIENT_SAFE_ERROR_CODE_VISIBLE_TEST', () => {
+  const { controller, errors } = errorCaptureController({
+    ok: false,
+    code: 'REQUIRED_FIELD',
+    message: 'No se pudo completar la operacion solicitada.'
+  });
+
+  controller.loadDashboard();
+
+  assert.equal(errors[0], 'No se pudo completar la operacion solicitada. [REQUIRED_FIELD]');
+});
+
+test('PANEL_CLIENT_ERROR_DETAIL_NOT_VISIBLE_TEST', () => {
+  const { controller, errors } = errorCaptureController({
+    ok: false,
+    code: 'REQUIRED_FIELD',
+    message: 'No se pudo completar la operacion solicitada. family@example.invalid',
+    detail: 'token SECRET_TOKEN C:\\Users\\danie\\private',
+    stack: 'STACK line with ALU-001 and family@example.invalid'
+  });
+
+  controller.loadDashboard();
+
+  assert.equal(errors[0], 'No se pudo completar la operacion solicitada. [REQUIRED_FIELD]');
+  assert.equal(errors[0].includes('family@example.invalid'), false);
+  assert.equal(errors[0].includes('SECRET_TOKEN'), false);
+  assert.equal(errors[0].includes('C:\\Users'), false);
+  assert.equal(errors[0].includes('ALU-001'), false);
+});
+
+test('PANEL_CLIENT_UNSAFE_CODE_REJECTED_TEST', () => {
+  ['ERROR: detail', '<script>', 'user@example.invalid', 'ERROR ' + ['123', '456', '789', '012', '3'].join('')].forEach((code) => {
+    const { controller, errors } = errorCaptureController({
+      ok: false,
+      code,
+      message: 'No se pudo completar la operacion solicitada.'
+    });
+
+    controller.loadDashboard();
+
+    assert.equal(errors[0], 'No se pudo completar la operacion solicitada.');
+  });
+});
+
+test('PANEL_CLIENT_ERROR_CLEARED_AFTER_SUCCESS_TEST', () => {
+  const errors = [];
+  let callCount = 0;
+  const controller = createPanelClientController({
+    callServer(name, args, onSuccess) {
+      callCount += 1;
+      if (callCount === 1) {
+        onSuccess({ ok: false, code: 'REQUIRED_FIELD', message: 'No se pudo completar la operacion solicitada.' });
+        return;
+      }
+      onSuccess({ ok: true, data: {} });
+    },
+    render: {
+      error(message) {
+        errors.push(message);
+      }
+    }
+  });
+
+  controller.loadDashboard();
+  controller.loadDashboard();
+
+  assert.equal(errors[0], 'No se pudo completar la operacion solicitada. [REQUIRED_FIELD]');
+  assert.equal(errors[1], '');
+});
+
+test('PANEL_CONVOCATION_SUCCESS_CLEARS_PREVIOUS_ERROR_TEST', () => {
+  const errors = [];
+  const html = [];
+  const state = {};
+  let controller;
+  controller = createPanelClientController({
+    callServer(name, args, onSuccess) {
+      if (name === 'getPanelDashboard') {
+        onSuccess({ ok: false, code: 'REQUIRED_FIELD', message: 'No se pudo completar la operacion solicitada.' });
+        return;
+      }
+      onSuccess({
+        ok: true,
+        data: {
+          openSessions: [],
+          programmedMatches: [],
+          playedMatches: [],
+          runtimeCapabilities: { externalMailEnabled: false }
+        }
+      });
+    },
+    state,
+    render: {
+      error(message) {
+        errors.push(message);
+      },
+      referenceData() {
+        html.push(createPanelRenderer({ state, controller: controller }).renderConvocations());
+      }
+    }
+  });
+
+  controller.loadDashboard();
+  controller.loadReferenceData();
+
+  assert.equal(errors[0], 'No se pudo completar la operacion solicitada. [REQUIRED_FIELD]');
+  assert.equal(errors[1], '');
+  assert.equal(html[0].includes('Sin propuesta'), true);
+  assert.equal(html[0].includes('Aprobado por'), true);
 });
 
 test('PANEL_TEST_SEAM_NOT_PUBLIC_RPC_TEST', () => {
