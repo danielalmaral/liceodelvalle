@@ -6,11 +6,11 @@
 | Alumnos | IMPLEMENTED |
 | Asistencias | IMPLEMENTED |
 | Convocatorias | IMPLEMENTED |
-| Partidos | SCAFFOLDED |
-| Post Partido | SCAFFOLDED |
-| Reportes | SCAFFOLDED |
-| Comunicaciones | SCAFFOLDED |
-| Configuracion | SCAFFOLDED |
+| Partidos | IMPLEMENTED |
+| Post Partido | IMPLEMENTED |
+| Reportes | IMPLEMENTED |
+| Comunicaciones | IMPLEMENTED |
+| Configuracion | IMPLEMENTED_READ_ONLY |
 
 ## Corrective 01 Audit Closure
 
@@ -66,8 +66,5 @@
 
 - `BRAND_OFFICIAL_LOGO_ASSET_PENDING`
 - `CONVOCATION_PDF_EXPORT`
-- `PARTIDOS_FINAL_UI`
-- `POSTMATCH_FINAL_UI`
-- `REPORTES_FINAL_UI`
-- `COMUNICACIONES_FINAL_UI`
-- `CONFIGURACION_FINAL_UI`
+- `REPORT_EXPORT_PENDING`
+- `CONFIG_WRITE_UI_GOVERNANCE_PENDING`
