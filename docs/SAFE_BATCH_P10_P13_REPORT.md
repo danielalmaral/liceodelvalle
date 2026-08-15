@@ -33,6 +33,13 @@ Correctivo 03 aplicado:
 - Batch de comunicaciones conserva resultados parciales auditables ante incertidumbre de entrega.
 - Facade de rotacion conserva firma `(studentId, competition)` y `generateConvocation` preserva `actor`.
 
+Correctivo 04 aplicado:
+
+- Intent operacional persistido como fingerprint deterministica compacta, sin payload sensible en claro.
+- `COMPLETED` marker final requerido para considerar un replay como completo.
+- Replays de `sendPendingCommunications` quedan ligados al `operationId`; nuevas filas requieren nueva ejecucion.
+- Auditoria parcial falla cerrado con `AUDIT_RECONCILIATION_REQUIRED` y no repite writes de dominio.
+
 No ejecuta recursos reales:
 
 - Sin Spreadsheet productivo.

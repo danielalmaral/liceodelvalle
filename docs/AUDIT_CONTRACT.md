@@ -17,13 +17,16 @@ Autoridad de escritura:
 - Las escrituras operativas que deben auditarse se ejecutan mediante `OperationalCommandService`.
 - Cada comando auditado requiere `idGenerator.operationId`; un ID vacío o ausente falla cerrado.
 - Antes de escribir dominio, el comando revisa evidencia existente para ese `operationId`.
-- La evidencia durable incluye un evento tecnico `OPERACION/INTENT` con firma canonica de intencion; la decision de replay no depende del estado mutable posterior al primer write.
+- La evidencia durable incluye un evento tecnico `OPERACION/INTENT` con `command`, `operationId` y fingerprint canonica no reversible de intencion; la decision de replay no depende del estado mutable posterior al primer write ni del texto visible de bitacora.
+- El payload canonico cubre todos los inputs funcionales del comando. Texto libre, razones, observaciones y actores potencialmente sensibles se representan por fingerprint, no por texto claro.
+- Una operacion completa termina con `AUD-<operationId>-OPERACION-COMPLETED`. Si existe evidencia de operacion sin ese marker, el replay falla cerrado con `AUDIT_RECONCILIATION_REQUIRED`.
 - Si la operación ya fue procesada con la misma intención, no se repite el write y se devuelve replay idempotente.
 - Si el mismo `operationId` se reutiliza para otro payload, falla con `OPERATION_ID_CONFLICT` antes del write.
 - El comando valida y escribe el dominio sólo cuando la operación es nueva; si esa escritura falla, no se agrega evento.
 - Si el append de auditoría falla después del write de dominio, el comando falla con `AUDIT_PERSISTENCE_FAILED_AFTER_WRITE` para reconciliación explícita.
 - `EVENTO_ID` incorpora `operationId` y entidad; operaciones batch usan ID de entidad, no índice de array.
 - Operaciones sin cambio funcional tambien conservan firma de intencion para distinguir replay legitimo de reutilizacion indebida del `operationId`.
+- `sendPendingCommunications` usa identidad estable por `operationId`; un replay del mismo ID no vuelve a consultar ni enviar nuevas filas pendientes.
 - `AuditService.appendEvent` permite replay sólo si el payload autoritativo coincide. Si el mismo `EVENTO_ID` trae otro payload, falla con `AUDIT_EVENT_ID_CONFLICT`.
 - Actualizaciones de participación con múltiples campos crean un evento por campo realmente cambiado.
 

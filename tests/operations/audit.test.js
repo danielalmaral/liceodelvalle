@@ -173,6 +173,10 @@ function functionalEvents(rows) {
   return rows.filter((row) => row.ENTIDAD !== 'OPERACION');
 }
 
+function operationEvents(rows) {
+  return rows.filter((row) => row.ENTIDAD === 'OPERACION');
+}
+
 test('AUDIT_E2E_ABSENCE_FJ_TEST records audit through absence command', () => {
   const state = auditedCommandState();
   state.command.resolveAbsence('AST-001', 'FJ', { operationId: 'OP-FJ' });
@@ -283,6 +287,50 @@ test('OPERATION_ID_DIFFERENT_PAYLOAD_CONFLICT_TEST rejects replay with different
   assert.equal(state.participationRows[0].MINUTOS_JUGADOS, 10);
 });
 
+test('OPERATION_CREATE_PARTICIPATION_DIFFERENT_PAYLOAD_CONFLICT_TEST rejects create replay with different payload', () => {
+  const state = auditedCommandState({
+    idGenerator: {
+      operationId: () => 'OP-CREATE-DIFF',
+      participationId: () => 'PRT-CREATE-DIFF'
+    }
+  });
+  state.command.createParticipation({
+    PARTIDO_ID: 'PAR-001',
+    ALUMNO_ID: 'ALU-002',
+    CONVOCATORIA_ID: 'CON-001',
+    MINUTOS_JUGADOS: 20
+  }, { operationId: 'OP-CREATE-DIFF' });
+  assert.throws(() => state.command.createParticipation({
+    PARTIDO_ID: 'PAR-001',
+    ALUMNO_ID: 'ALU-002',
+    CONVOCATORIA_ID: 'CON-001',
+    MINUTOS_JUGADOS: 30
+  }, { operationId: 'OP-CREATE-DIFF' }), /OPERATION_ID_CONFLICT/);
+  assert.equal(state.getCreateParticipationWriteCount(), 1);
+});
+
+test('OPERATION_ABSENCE_DIFFERENT_REASON_CONFLICT_TEST rejects same absence with different reason fingerprint', () => {
+  const state = auditedCommandState();
+  state.command.resolveAbsence('AST-001', 'FJ', { operationId: 'OP-ABS-REASON', reason: 'medical detail one' });
+  assert.throws(() => state.command.resolveAbsence('AST-001', 'FJ', { operationId: 'OP-ABS-REASON', reason: 'medical detail two' }), /OPERATION_ID_CONFLICT/);
+  assert.equal(state.getAbsenceWriteCount(), 1);
+  assert.equal(state.auditRows.some((row) => String(row.VALOR_NUEVO).includes('medical detail')), false);
+});
+
+test('OPERATION_SELECTION_DIFFERENT_REASON_CONFLICT_TEST rejects same selection with different reason fingerprint', () => {
+  const state = auditedCommandState();
+  state.command.setFinalSelection('CON-001', 'ALU-001', false, 'reason one', { operationId: 'OP-SEL-REASON' });
+  assert.throws(() => state.command.setFinalSelection('CON-001', 'ALU-001', false, 'reason two', { operationId: 'OP-SEL-REASON' }), /OPERATION_ID_CONFLICT/);
+  assert.equal(state.getSelectionWriteCount(), 1);
+});
+
+test('OPERATION_UPDATE_FREE_TEXT_DIFFERENT_PAYLOAD_CONFLICT_TEST rejects changed free text by fingerprint', () => {
+  const state = auditedCommandState();
+  state.command.updateParticipation('PRT-001', { OBSERVACIONES: 'private note one' }, { operationId: 'OP-TEXT' });
+  assert.throws(() => state.command.updateParticipation('PRT-001', { OBSERVACIONES: 'private note two' }, { operationId: 'OP-TEXT' }), /OPERATION_ID_CONFLICT/);
+  assert.equal(state.getParticipationWriteCount(), 1);
+});
+
 test('OPERATION_ID_REPLAY_NO_SECOND_WRITE_TEST replays without a second domain write', () => {
   const state = auditedCommandState();
   state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 10 }, { operationId: 'OP-REPLAY' });
@@ -355,6 +403,148 @@ test('OPERATION_REPLAY_COMMUNICATION_RETRY_NO_SECOND_SEND_TEST replays retry wit
   const result = state.command.retryCommunication('COM-001', { operationId: 'OP-RETRY-REPLAY' });
   assert.equal(result.idempotent, true);
   assert.equal(state.getRetrySendCount(), 1);
+});
+
+test('OPERATION_INTENT_LONG_PAYLOAD_REPLAY_TEST replays long intent without truncation conflict', () => {
+  const state = auditedCommandState();
+  const longReason = 'x'.repeat(260);
+  state.command.resolveAbsence('AST-001', 'FJ', { operationId: 'OP-LONG', reason: longReason });
+  const result = state.command.resolveAbsence('AST-001', 'FJ', { operationId: 'OP-LONG', reason: longReason });
+  const intent = operationEvents(state.auditRows).filter((row) => row.CAMPO === 'INTENT')[0];
+  assert.equal(result.idempotent, true);
+  assert.equal(state.getAbsenceWriteCount(), 1);
+  assert.equal(String(intent.VALOR_NUEVO).length < 180, true);
+  assert.equal(String(intent.VALOR_NUEVO).includes(longReason), false);
+});
+
+test('OPERATION_INTENT_NO_PII_TEST stores no raw PII or free text in durable intent', () => {
+  const state = auditedCommandState();
+  state.command.updateParticipation('PRT-001', {
+    OBSERVACIONES: 'Call family@example.invalid at private-number with medical note',
+    MINUTOS_JUGADOS: 5
+  }, { operationId: 'OP-NO-PII' });
+  const intentText = operationEvents(state.auditRows).map((row) => [row.VALOR_NUEVO, row.MOTIVO].join(' ')).join(' ');
+  assert.equal(intentText.includes('family@example.invalid'), false);
+  assert.equal(intentText.includes('private-number'), false);
+  assert.equal(intentText.includes('medical note'), false);
+  assert.equal(intentText.includes('Call'), false);
+});
+
+test('OPERATION_SEND_PENDING_REPLAY_NO_SECOND_SEND_TEST replays send batch without second send', () => {
+  const communicationRows = [
+    { COMUNICACION_ID: 'COM-001', ESTADO: 'PENDIENTE' },
+    { COMUNICACION_ID: 'COM-002', ESTADO: 'PENDIENTE' }
+  ];
+  const auditRows = [];
+  let sendCount = 0;
+  const command = createOperationalCommandService({
+    idGenerator: { operationId: () => 'OP-SEND-REPLAY' },
+    repositories: { communicationRepository: createArrayRepository(communicationRows) },
+    services: {
+      auditService: createAuditService({ auditRepository: createArrayRepository(auditRows), utils }),
+      communicationService: {
+        sendPendingCommunications() {
+          return communicationRows.filter((row) => row.ESTADO === 'PENDIENTE').map((row) => {
+            sendCount += 1;
+            row.ESTADO = 'ENVIADO';
+            return { ok: true, communication: row };
+          });
+        }
+      }
+    },
+    utils
+  });
+  command.sendPendingCommunications({ operationId: 'OP-SEND-REPLAY' });
+  const replay = command.sendPendingCommunications({ operationId: 'OP-SEND-REPLAY' });
+  assert.equal(replay.idempotent, true);
+  assert.equal(sendCount, 2);
+});
+
+test('OPERATION_SEND_PENDING_OLD_ID_DOES_NOT_SEND_NEW_ROWS_TEST requires new operation id for new pending rows', () => {
+  const communicationRows = [{ COMUNICACION_ID: 'COM-001', ESTADO: 'PENDIENTE' }];
+  const auditRows = [];
+  let sendCount = 0;
+  const command = createOperationalCommandService({
+    idGenerator: { operationId: () => 'OP-SEND-OLD' },
+    repositories: { communicationRepository: createArrayRepository(communicationRows) },
+    services: {
+      auditService: createAuditService({ auditRepository: createArrayRepository(auditRows), utils }),
+      communicationService: {
+        sendPendingCommunications() {
+          return communicationRows.filter((row) => row.ESTADO === 'PENDIENTE').map((row) => {
+            sendCount += 1;
+            row.ESTADO = 'ENVIADO';
+            return { ok: true, communication: row };
+          });
+        }
+      }
+    },
+    utils
+  });
+  command.sendPendingCommunications({ operationId: 'OP-SEND-OLD' });
+  communicationRows.push({ COMUNICACION_ID: 'COM-002', ESTADO: 'PENDIENTE' });
+  assert.equal(command.sendPendingCommunications({ operationId: 'OP-SEND-OLD' }).idempotent, true);
+  assert.equal(sendCount, 1);
+  command.sendPendingCommunications({ operationId: 'OP-SEND-NEW' });
+  assert.equal(sendCount, 2);
+});
+
+test('AUDIT_COMPLETION_MARKER_REQUIRED_TEST writes intent functional events and completed marker', () => {
+  const state = auditedCommandState();
+  state.command.resolveAbsence('AST-001', 'FJ', { operationId: 'OP-COMPLETE' });
+  assert.equal(!!state.auditRows.find((row) => row.EVENTO_ID === 'AUD-OP-COMPLETE-OPERACION-INTENT'), true);
+  assert.equal(!!state.auditRows.find((row) => row.EVENTO_ID === 'AUD-OP-COMPLETE-OPERACION-COMPLETED'), true);
+  assert.equal(functionalEvents(state.auditRows).length, 1);
+});
+
+test('AUDIT_PARTIAL_APPEND_RECONCILIATION_TEST blocks retry after intent-only partial audit', () => {
+  const auditRows = [];
+  let inserts = 0;
+  const state = auditedCommandState({
+    auditRepository: {
+      getAll() { return auditRows; },
+      insert(record) {
+        inserts += 1;
+        if (inserts === 2) {
+          throw new Error('functional append failed');
+        }
+        auditRows.push(record);
+        return record;
+      }
+    }
+  });
+  assert.throws(() => state.command.resolveAbsence('AST-001', 'FJ', { operationId: 'OP-PARTIAL' }), /AUDIT_PERSISTENCE_FAILED_AFTER_WRITE/);
+  assert.throws(() => state.command.resolveAbsence('AST-001', 'FJ', { operationId: 'OP-PARTIAL' }), /AUDIT_RECONCILIATION_REQUIRED/);
+  assert.equal(state.getAbsenceWriteCount(), 1);
+});
+
+test('AUDIT_PARTIAL_MULTI_EVENT_RECONCILIATION_TEST blocks retry after incomplete multi-event audit', () => {
+  const auditRows = [];
+  let inserts = 0;
+  const state = auditedCommandState({
+    auditRepository: {
+      getAll() { return auditRows; },
+      insert(record) {
+        inserts += 1;
+        if (inserts === 3) {
+          throw new Error('second functional append failed');
+        }
+        auditRows.push(record);
+        return record;
+      }
+    }
+  });
+  assert.throws(() => state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 10, GOLES: 1 }, { operationId: 'OP-PARTIAL-MULTI' }), /AUDIT_PERSISTENCE_FAILED_AFTER_WRITE/);
+  assert.throws(() => state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 10, GOLES: 1 }, { operationId: 'OP-PARTIAL-MULTI' }), /AUDIT_RECONCILIATION_REQUIRED/);
+  assert.equal(state.getParticipationWriteCount(), 1);
+});
+
+test('AUDIT_COMPLETE_REPLAY_TEST replays only after completed marker exists', () => {
+  const state = auditedCommandState();
+  state.command.resolveAbsence('AST-001', 'FJ', { operationId: 'OP-COMPLETE-REPLAY' });
+  const result = state.command.resolveAbsence('AST-001', 'FJ', { operationId: 'OP-COMPLETE-REPLAY' });
+  assert.equal(result.idempotent, true);
+  assert.equal(state.getAbsenceWriteCount(), 1);
 });
 
 test('OPERATION_CROSS_COMMAND_ID_CONFLICT_TEST rejects operation id reused across commands', () => {
