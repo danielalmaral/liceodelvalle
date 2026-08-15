@@ -14,6 +14,15 @@ P1 agrega la infraestructura canónica de configuración dinámica. `CONFIG` es 
 
 El safe batch P2-P5 agrega cimientos de alumnos, tutores, sesiones, asistencias, resolución de faltas y métricas. No crea recursos Google reales, no envía correos y no implementa convocatoria.
 
+El safe batch P6-P9 agrega partidos, elegibilidad, rotación y motor determinista de convocatoria hasta aprobación humana. No envía correos, no crea recursos Google reales y no implementa participación ni estadísticas de partido.
+
+## Contratos
+
+- `docs/MATCH_CONTRACT.md`: `PARTIDOS` y FK `SESIONES.PARTIDO_ID`.
+- `docs/ELIGIBILITY_CONTRACT.md`: elegibilidad por partido, `PENDING` y consumo canónico de FI.
+- `docs/ROTATION_CONTRACT.md`: deuda por competencia y excepciones humanas.
+- `docs/CONVOCATION_CONTRACT.md`: propuesta, revisión y aprobación humana de convocatorias.
+
 ## Comandos
 
 ```bash

@@ -35,3 +35,11 @@ El proyecto se prepara como Google Apps Script standalone con runtime V8, desarr
 Los módulos de alumnos, tutores, sesiones, asistencias, resolución de faltas y métricas son servicios puros con repositories/adapters inyectados. Las operaciones temporales aceptan reloj inyectable y los envíos de correo quedan como intents sin entrega real.
 
 Los snapshots `VALOR_APLICADO`, `VALOR_MAXIMO_APLICADO` y `LIMITE_JUSTIFICACION` preservan valores históricos aunque `CONFIG` cambie posteriormente.
+
+## P6-P9 Competition
+
+`MatchService`, `EligibilityService`, `RotationService` y `ConvocationService` mantienen la lógica competitiva en servicios puros con repositories, reloj e IDs inyectables. `CONFIG` sigue siendo autoridad runtime para cupos, mínimos y rotación.
+
+La propuesta de convocatoria no consume FI, no actualiza rotación y no envía comunicaciones. Sólo una aprobación humana explícita persiste `APROBADA`, detalles finales y `ROTACION_DESPUES`.
+
+Los módulos en `src/` conservan compatibilidad directa con Apps Script V8: no dependen de `require`, `import` ni `export` en runtime productivo.

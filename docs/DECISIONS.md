@@ -39,3 +39,15 @@ La ausencia puede preparar intents de comunicación para tutores elegibles, pero
 ## ADR-010: Cumplimiento vs Presencia
 
 Cumplimiento usa snapshots de valor aplicado sobre valor máximo aplicado. Presencia física mide sólo asistencia real `A` y `R`.
+
+## ADR-011: FI Inmutable Con Evidencia En Detalle
+
+Una `FI` pendiente bloquea exactamente una convocatoria y se considera consumida sólo por evidencia en `CONVOCATORIA_DETALLE` de una convocatoria aprobada o posterior, con partido no cancelado. `ASISTENCIAS` permanece como historial inmutable.
+
+## ADR-012: Rotacion Por Competencia
+
+La deuda de rotación se calcula por alumno y competencia usando únicamente convocatorias aprobadas, enviadas o cerradas de partidos no cancelados. Borradores y propuestas no alteran historia.
+
+## ADR-013: Convocatoria Con Aprobacion Humana
+
+El motor puede recomendar una propuesta determinista, pero sólo `approveConvocation` con actor puede aprobar. La aprobación valida total exacto, mínimos, elegibilidad, pendientes, cambios manuales, excepciones de rotación y partido no cancelado antes de escribir.

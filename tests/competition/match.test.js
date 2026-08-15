@@ -4,6 +4,7 @@ const utils = require('../../src/common/DomainUtils');
 const { setupSheetWithHeaders } = require('../../src/common/SheetSetup');
 const { createArrayRepository } = require('../../src/repositories/ArrayRepository');
 require('../../src/domain/MatchContracts');
+require('../../src/domain/ConvocationContracts');
 require('../../src/domain/AttendanceContracts');
 const { setupCompetitionSheets } = require('../../src/config/CompetitionSetup');
 const { createMatchService } = require('../../src/services/MatchService');
