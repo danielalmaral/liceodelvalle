@@ -29,7 +29,9 @@ function createLdvAppsScriptRuntime(dependencies) {
   var environment = dependencies.environment || createAppsScriptEnvironmentAdapter(dependencies.propertiesProvider);
   var spreadsheetId = environment.getSpreadsheetId();
   var repositoryFactory = dependencies.repositoryFactory || createAppsScriptRepositoryFactory({
+    createConfigRepository: dependencies.createConfigRepository,
     createRepository: dependencies.createRepository,
+    createSheetRepository: dependencies.createSheetRepository,
     spreadsheet: dependencies.spreadsheet,
     spreadsheetId: spreadsheetId,
     spreadsheetProvider: dependencies.spreadsheetProvider

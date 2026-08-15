@@ -2,7 +2,8 @@ function createAppsScriptRepositoryFactory(context) {
   context = context || {};
   var spreadsheetId = context.spreadsheetId;
   var spreadsheetProvider = context.spreadsheetProvider;
-  var createRepository = context.createRepository || (typeof createSheetRepository === 'function' ? createSheetRepository : null);
+  var createSheetRepo = context.createSheetRepository || context.createRepository || (typeof createSheetRepository === 'function' ? createSheetRepository : null);
+  var createConfigRepo = context.createConfigRepository || (typeof createConfigRepository === 'function' ? createConfigRepository : null);
   var headersByName = {
     CONFIG: CONFIG_HEADERS,
     ALUMNOS: STUDENT_HEADERS,
@@ -46,11 +47,25 @@ function createAppsScriptRepositoryFactory(context) {
       throw new Error('SHEET_REQUIRED: ' + sheetName);
     }
 
-    if (typeof createRepository !== 'function') {
+    if (typeof createSheetRepo !== 'function') {
       throw new Error('SHEET_REPOSITORY_FACTORY_REQUIRED');
     }
 
-    return createRepository({ sheet: sheet, headers: headers });
+    var sheetRepository = createSheetRepo({ sheet: sheet, headers: headers });
+
+    if (sheetName === 'CONFIG') {
+      if (typeof createConfigRepo !== 'function') {
+        throw new Error('CONFIG_REPOSITORY_FACTORY_REQUIRED');
+      }
+
+      return createConfigRepo({
+        getRows: function() {
+          return sheetRepository.getAll();
+        }
+      });
+    }
+
+    return sheetRepository;
   }
 
   return {

@@ -15,14 +15,17 @@ Este runbook documenta P15. No se ejecuta en P14.
 ## Ejecucion Controlada
 
 1. Hacer `clasp push` controlado desde revision certificada.
-2. Ejecutar setup explicito para crear y validar hojas.
-3. Abrir `PANEL`.
-4. Ejecutar flujo sintetico de asistencia, convocatoria y post-partido.
-5. Preparar comunicaciones sin envio real.
-6. Revisar `BITACORA`.
-7. Revisar errores de Apps Script.
-8. No instalar triggers.
-9. No enviar email.
+2. Ejecutar setup explicito para crear las 12 hojas estructurales.
+3. Poblar manualmente las 25 filas requeridas de `CONFIG` con datos ficticios persistidos.
+4. Usar `TEMPORADA=P15_SMOKE` solamente para este smoke ficticio.
+5. Ejecutar la verificacion de CONFIG (`verifyConfigReady` / equivalente) y confirmar resultado listo.
+6. Abrir `PANEL` solo despues de que CONFIG este listo.
+7. Ejecutar flujo sintetico de asistencia, convocatoria y post-partido.
+8. Preparar comunicaciones sin envio real.
+9. Revisar `BITACORA`.
+10. Revisar errores de Apps Script.
+11. No instalar triggers.
+12. No enviar email.
 
 ## Evidencia Requerida
 

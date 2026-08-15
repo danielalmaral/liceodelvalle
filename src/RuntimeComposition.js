@@ -251,14 +251,23 @@ function createAppsScriptRuntime(options) {
     configService: configService,
     convocationRepository: repositories.convocationRepository,
     detailRepository: repositories.detailRepository,
-    queries: queries
+    queries: queries,
+    utils: options.utils
   });
   queries.getPanelAttendance = function(sessionId) { return panelQueryService.getAttendanceView(sessionId); };
   queries.getPanelConvocation = function(convocationId) { return panelQueryService.getConvocationView(convocationId); };
   queries.getPanelDashboard = function() { return panelQueryService.getDashboard(); };
   queries.getPanelParticipation = function(matchId) { return panelQueryService.getParticipationView(matchId); };
+  queries.getPanelReferenceData = function() { return panelQueryService.getReferenceData(); };
   queries.getRuntimeCapabilities = function() {
     return { externalMailEnabled: runtimeCapabilities.externalMailEnabled };
+  };
+  queries.verifyConfigReady = function() {
+    configService.validateRequiredConfig();
+    return {
+      ready: true,
+      requiredKeys: configService.getAll().length
+    };
   };
 
   return {
