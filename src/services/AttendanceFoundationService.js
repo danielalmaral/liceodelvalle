@@ -18,18 +18,10 @@ function createAttendanceFoundationService(dependencies) {
 
   function normalizeSession(row) {
     var fecha = utils.parseDateValue(row.FECHA, 'FECHA');
-    var start = row.HORA_INICIO ? new Date('1970-01-01T' + row.HORA_INICIO) : null;
-    var end = row.HORA_FIN ? new Date('1970-01-01T' + row.HORA_FIN) : null;
+    var start = utils.normalizeTimeValue(row.HORA_INICIO, 'HORA_INICIO', false);
+    var end = utils.normalizeTimeValue(row.HORA_FIN, 'HORA_FIN', false);
 
-    if (start && Number.isNaN(start.getTime())) {
-      throw utils.createDomainError('INVALID_TIME', 'HORA_INICIO');
-    }
-
-    if (end && Number.isNaN(end.getTime())) {
-      throw utils.createDomainError('INVALID_TIME', 'HORA_FIN');
-    }
-
-    if (start && end && end.getTime() < start.getTime()) {
+    if (start && end && end < start) {
       throw utils.createDomainError('SESSION_TIME_RANGE', row.SESION_ID);
     }
 
@@ -37,8 +29,8 @@ function createAttendanceFoundationService(dependencies) {
       sesionId: utils.requireText(row.SESION_ID, 'SESION_ID'),
       tipo: utils.assertOneOf(row.TIPO, SESSION_ENUMS.TIPO, 'TIPO'),
       fecha: fecha,
-      horaInicio: row.HORA_INICIO || '',
-      horaFin: row.HORA_FIN || '',
+      horaInicio: start,
+      horaFin: end,
       competencia: utils.assertOneOf(row.COMPETENCIA, SESSION_ENUMS.COMPETENCIA, 'COMPETENCIA'),
       partidoId: utils.optionalText(row.PARTIDO_ID),
       descripcion: utils.optionalText(row.DESCRIPCION),

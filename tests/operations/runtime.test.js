@@ -19,6 +19,7 @@ const { setupOperationalSheets } = require('../../src/config/GlobalSetup');
 const { createSheetRepository } = require('../../src/repositories/SheetRepository');
 const { createTriggerHandlers } = require('../../src/triggers/TriggerHandlers');
 const { createAppsScriptRuntime } = require('../../src/RuntimeComposition');
+const { createRuntimeUtilsAdapter } = require('../../src/AppsScriptRuntimeBootstrap');
 const { createConfigService } = require('../../src/config/ConfigService');
 const { createMasterDataService } = require('../../src/services/MasterDataService');
 const { createAttendanceFoundationService } = require('../../src/services/AttendanceFoundationService');
@@ -270,6 +271,41 @@ test('RUNTIME_FULL_GRAPH_COMPOSITION_TEST builds all P1-P13 services and command
   assert.equal(typeof runtime.commands.createSession, 'function');
   assert.equal(typeof runtime.commands.createMatch, 'function');
   assert.equal(typeof runtime.commands.updateStudentSportsState, 'function');
+});
+
+test('APPS_SCRIPT_RUNTIME_TIME_UTIL_TEST', () => {
+  const names = [
+    'assertOneOf',
+    'assertUnique',
+    'createDomainError',
+    'isValidEmail',
+    'normalizeEmail',
+    'normalizeStrictBoolean',
+    'normalizeTimeValue',
+    'optionalText',
+    'parseDateValue',
+    'parseOptionalDateValue',
+    'requireText'
+  ];
+  const previous = {};
+
+  names.forEach((name) => {
+    previous[name] = globalThis[name];
+    globalThis[name] = utils[name];
+  });
+
+  try {
+    const adapter = createRuntimeUtilsAdapter();
+    assert.equal(adapter.normalizeTimeValue(new Date(2000, 0, 1, 8, 5, 0, 0), 'HORA', true), '08:05');
+  } finally {
+    names.forEach((name) => {
+      if (previous[name] === undefined) {
+        delete globalThis[name];
+      } else {
+        globalThis[name] = previous[name];
+      }
+    });
+  }
 });
 
 test('RUNTIME_MISSING_REQUIRED_REPOSITORY_TEST fails closed on missing repository', () => {

@@ -117,6 +117,27 @@ test('SESSION_TIME_RANGE_TEST rejects inverted times', () => {
   assert.throws(() => service({ sessions: [session({ HORA_FIN: '09:59' })] }).getSessions(), /SESSION_TIME_RANGE/);
 });
 
+test('SESSION_REAL_SHEETS_DATE_TIME_READ_TEST', () => {
+  const rows = service({
+    sessions: [session({
+      FECHA: new Date(2026, 0, 2),
+      HORA_INICIO: new Date(2000, 0, 1, 16, 0, 0, 0),
+      HORA_FIN: new Date(2000, 0, 1, 17, 30, 0, 0)
+    })]
+  }).getSessions();
+  assert.equal(rows[0].horaInicio, '16:00');
+  assert.equal(rows[0].horaFin, '17:30');
+});
+
+test('SESSION_REAL_SHEETS_DATE_TIME_ORDER_TEST', () => {
+  assert.throws(() => service({
+    sessions: [session({
+      HORA_INICIO: new Date(2000, 0, 1, 17, 30, 0, 0),
+      HORA_FIN: new Date(2000, 0, 1, 16, 0, 0, 0)
+    })]
+  }).getSessions(), /SESSION_TIME_RANGE/);
+});
+
 test('ATTENDANCE_SCHEMA_TEST validates attendance fields', () => {
   assert.equal(service({ attendances: [attendance()] }).getAttendances()[0].estado, 'A');
 });

@@ -17,6 +17,7 @@ function createRuntimeUtilsAdapter() {
     isValidEmail: isValidEmail,
     normalizeEmail: normalizeEmail,
     normalizeStrictBoolean: normalizeStrictBoolean,
+    normalizeTimeValue: normalizeTimeValue,
     optionalText: optionalText,
     parseDateValue: parseDateValue,
     parseOptionalDateValue: parseOptionalDateValue,

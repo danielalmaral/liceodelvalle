@@ -19,24 +19,6 @@ function createSessionService(dependencies) {
     }
   }
 
-  function parseTime(value, fieldName, required) {
-    if (value === undefined || value === null || value === '') {
-      if (required) {
-        throw utils.createDomainError('REQUIRED_FIELD', fieldName);
-      }
-      return '';
-    }
-
-    var text = String(value).trim();
-    var date = new Date('1970-01-01T' + text);
-
-    if (Number.isNaN(date.getTime())) {
-      throw utils.createDomainError('INVALID_TIME', fieldName);
-    }
-
-    return text;
-  }
-
   function assertUniqueSessionId(sessionId) {
     sessionRepository.getAll().forEach(function(record) {
       if (record.SESION_ID === sessionId) {
@@ -56,7 +38,7 @@ function createSessionService(dependencies) {
       return;
     }
 
-    if (new Date('1970-01-01T' + end).getTime() < new Date('1970-01-01T' + start).getTime()) {
+    if (end < start) {
       throw utils.createDomainError('SESSION_TIME_RANGE', sessionId);
     }
   }
@@ -68,8 +50,8 @@ function createSessionService(dependencies) {
       ? (input.COMPETENCIA || input.competencia || 'GENERAL')
       : (input.COMPETENCIA || input.competencia);
     var partidoId = utils.optionalText(input.PARTIDO_ID || input.partidoId);
-    var start = parseTime(input.HORA_INICIO || input.horaInicio, 'HORA_INICIO', true);
-    var end = parseTime(input.HORA_FIN || input.horaFin, 'HORA_FIN', false);
+    var start = utils.normalizeTimeValue(input.HORA_INICIO || input.horaInicio, 'HORA_INICIO', true);
+    var end = utils.normalizeTimeValue(input.HORA_FIN || input.horaFin, 'HORA_FIN', false);
     var match;
 
     sessionId = utils.requireText(sessionId, 'SESION_ID');

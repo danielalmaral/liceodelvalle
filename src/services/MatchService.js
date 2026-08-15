@@ -17,20 +17,6 @@ function createMatchService(dependencies) {
     }
   }
 
-  function parseTime(value, fieldName) {
-    if (!value) {
-      return null;
-    }
-
-    var date = new Date('1970-01-01T' + value);
-
-    if (Number.isNaN(date.getTime())) {
-      throw utils.createDomainError('INVALID_TIME', fieldName);
-    }
-
-    return date;
-  }
-
   function parseOptionalScore(value, fieldName, required) {
     if (value === '' || value === null || value === undefined) {
       if (required) {
@@ -58,12 +44,12 @@ function createMatchService(dependencies) {
   }
 
   function normalizeMatch(row) {
-    var callTime = parseTime(row.HORA_CITACION, 'HORA_CITACION');
-    var matchTime = parseTime(row.HORA_PARTIDO, 'HORA_PARTIDO');
+    var callTime = utils.normalizeTimeValue(row.HORA_CITACION, 'HORA_CITACION', false);
+    var matchTime = utils.normalizeTimeValue(row.HORA_PARTIDO, 'HORA_PARTIDO', false);
     var duration = Number(row.DURACION_MINUTOS);
     var estado = utils.assertOneOf(row.ESTADO, MATCH_ENUMS.ESTADO, 'ESTADO');
 
-    if (callTime && matchTime && callTime.getTime() > matchTime.getTime()) {
+    if (callTime && matchTime && callTime > matchTime) {
       throw utils.createDomainError('MATCH_TIME_ORDER', row.PARTIDO_ID);
     }
 
@@ -77,8 +63,8 @@ function createMatchService(dependencies) {
       jornada: normalizeJornada(row.JORNADA),
       rival: utils.requireText(row.RIVAL, 'RIVAL'),
       fecha: utils.parseDateValue(row.FECHA, 'FECHA'),
-      horaCitacion: row.HORA_CITACION || '',
-      horaPartido: row.HORA_PARTIDO || '',
+      horaCitacion: callTime,
+      horaPartido: matchTime,
       sede: utils.requireText(row.SEDE, 'SEDE'),
       localVisitante: utils.assertOneOf(row.LOCAL_VISITANTE, MATCH_ENUMS.LOCAL_VISITANTE, 'LOCAL_VISITANTE'),
       duracionMinutos: duration,
@@ -129,6 +115,8 @@ function createMatchService(dependencies) {
     row.GOLES_FAVOR = input.GOLES_FAVOR !== undefined ? input.GOLES_FAVOR : (input.golesFavor !== undefined ? input.golesFavor : (row.GOLES_FAVOR || ''));
     row.GOLES_CONTRA = input.GOLES_CONTRA !== undefined ? input.GOLES_CONTRA : (input.golesContra !== undefined ? input.golesContra : (row.GOLES_CONTRA || ''));
     row.OBSERVACIONES = input.OBSERVACIONES !== undefined ? input.OBSERVACIONES : (input.observaciones !== undefined ? input.observaciones : (row.OBSERVACIONES || ''));
+    row.HORA_CITACION = utils.normalizeTimeValue(row.HORA_CITACION, 'HORA_CITACION', false);
+    row.HORA_PARTIDO = utils.normalizeTimeValue(row.HORA_PARTIDO, 'HORA_PARTIDO', false);
 
     normalizeMatch(row);
     return row;

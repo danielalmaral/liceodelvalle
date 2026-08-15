@@ -479,6 +479,48 @@ test('PANEL_CONVOCATION_VIEW_TEST', () => {
   assert.equal(view.details[0].puntajeAsistencia, 1);
 });
 
+test('PANEL_REFERENCE_DATA_REAL_SHEETS_TIME_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.sessionRepository = createArrayRepository([session({
+    HORA_INICIO: new Date(2000, 0, 1, 8, 5, 0, 0),
+    HORA_FIN: new Date(2000, 0, 1, 9, 0, 0, 0)
+  })]);
+  options.repositories.matchRepository = createArrayRepository([match({
+    HORA_CITACION: new Date(2000, 0, 1, 9, 5, 0, 0),
+    HORA_PARTIDO: new Date(2000, 0, 1, 10, 0, 0, 0)
+  })]);
+
+  const data = createAppsScriptRuntime(options).queries.getPanelReferenceData();
+
+  assert.equal(data.openSessions[0].horaInicio, '08:05');
+  assert.equal(data.openSessions[0].horaFin, '09:00');
+  assert.equal(data.programmedMatches[0].horaCitacion, '09:05');
+  assert.equal(data.programmedMatches[0].horaPartido, '10:00');
+});
+
+test('PANEL_CONVOCATION_ROUTE_WITH_REAL_SHEETS_TIME_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.sessionRepository = createArrayRepository([session({
+    HORA_INICIO: new Date(2000, 0, 1, 8, 5, 0, 0),
+    HORA_FIN: new Date(2000, 0, 1, 9, 0, 0, 0)
+  })]);
+  options.repositories.matchRepository = createArrayRepository([match({
+    HORA_CITACION: new Date(2000, 0, 1, 9, 5, 0, 0),
+    HORA_PARTIDO: new Date(2000, 0, 1, 10, 0, 0, 0)
+  })]);
+
+  const runtime = createAppsScriptRuntime(options);
+  const state = {
+    referenceData: runtime.queries.getPanelReferenceData(),
+    convocation: runtime.queries.getPanelConvocation('CON-001')
+  };
+  const html = createPanelRenderer({ state, controller: {} }).renderConvocations();
+
+  assert.equal(state.referenceData.programmedMatches[0].horaPartido, '10:00');
+  assert.ok(html.includes('Aprobado por'));
+  assert.ok(html.includes('CON-001'));
+});
+
 test('PANEL_PARTICIPATION_VIEW_TEST', () => {
   const options = runtimeOptions();
   options.repositories.matchRepository = createArrayRepository([match({ ESTADO: 'JUGADO', GOLES_FAVOR: 1, GOLES_CONTRA: 0 })]);
@@ -2387,6 +2429,34 @@ test('PANEL_REFERENCE_DATA_TEST', () => {
   assert.equal(Array.isArray(data.openSessions), true);
   assert.equal(Array.isArray(data.programmedMatches), true);
   assert.deepEqual(data.runtimeCapabilities, { externalMailEnabled: true });
+});
+
+test('SESSION_SERVICE_DATE_OBJECT_INPUT_TEST', () => {
+  const options = runtimeOptions();
+  const created = createAppsScriptRuntime(options).commands.createSession({
+    TIPO: 'ENTRENAMIENTO',
+    FECHA: '2026-02-02',
+    HORA_INICIO: new Date(2000, 0, 1, 16, 0, 0, 0),
+    HORA_FIN: new Date(2000, 0, 1, 17, 30, 0, 0),
+    COMPETENCIA: 'GENERAL'
+  });
+
+  assert.equal(created.HORA_INICIO, '16:00');
+  assert.equal(created.HORA_FIN, '17:30');
+  assert.equal(options.repositories.sessionRepository.getAll().filter((row) => row.SESION_ID === 'SES-NEW')[0].HORA_INICIO, '16:00');
+  assert.equal(options.repositories.sessionRepository.getAll().filter((row) => row.SESION_ID === 'SES-NEW')[0].HORA_FIN, '17:30');
+});
+
+test('TIME_LEGACY_STRING_CONCAT_REMOVED_TEST', () => {
+  [
+    'src/services/AttendanceFoundationService.js',
+    'src/services/SessionService.js',
+    'src/services/MatchService.js'
+  ].forEach((fileName) => {
+    const source = fs.readFileSync(path.join(__dirname, '..', '..', fileName), 'utf8');
+    assert.equal(source.includes("1970-01-01T' +"), false);
+    assert.equal(source.includes('1970-01-01T" +'), false);
+  });
 });
 
 test('PANEL_REFERENCE_DATA_PII_TEST', () => {

@@ -51,6 +51,7 @@ function session(overrides = {}) {
 
 function matchService(rows = [match()]) {
   return createMatchService({
+    idGenerator: { matchId: () => 'PAR-NEW' },
     matchRepository: createArrayRepository(rows),
     utils
   });
@@ -117,6 +118,48 @@ test('MATCH_SCORE_TEST requires non-negative scores when played', () => {
 
 test('MATCH_TIME_ORDER_TEST requires citacion before partido', () => {
   assert.throws(() => matchService([match({ HORA_CITACION: '11:00', HORA_PARTIDO: '10:00' })]).getMatches(), /MATCH_TIME_ORDER/);
+});
+
+test('MATCH_REAL_SHEETS_DATE_TIME_READ_TEST', () => {
+  const rows = matchService([match({
+    FECHA: new Date(2026, 1, 1),
+    HORA_CITACION: new Date(2000, 0, 1, 8, 5, 0, 0),
+    HORA_PARTIDO: new Date(2000, 0, 1, 9, 0, 0, 0)
+  })]).getMatches();
+  assert.equal(rows[0].horaCitacion, '08:05');
+  assert.equal(rows[0].horaPartido, '09:00');
+});
+
+test('MATCH_REAL_SHEETS_DATE_TIME_ORDER_TEST', () => {
+  assert.throws(() => matchService([match({
+    HORA_CITACION: new Date(2000, 0, 1, 11, 0, 0, 0),
+    HORA_PARTIDO: new Date(2000, 0, 1, 10, 0, 0, 0)
+  })]).getMatches(), /MATCH_TIME_ORDER/);
+});
+
+test('MATCH_DATE_OBJECT_WRITE_CANONICAL_TEST', () => {
+  const rows = [];
+  const service = matchService(rows);
+  const created = service.createMatch(match({
+    PARTIDO_ID: 'PAR-NEW',
+    HORA_CITACION: new Date(2000, 0, 1, 8, 5, 0, 0),
+    HORA_PARTIDO: new Date(2000, 0, 1, 9, 0, 0, 0)
+  }));
+
+  assert.equal(created.HORA_CITACION, '08:05');
+  assert.equal(created.HORA_PARTIDO, '09:00');
+  assert.equal(rows[0].HORA_CITACION, '08:05');
+  assert.equal(rows[0].HORA_PARTIDO, '09:00');
+
+  const updated = service.updateMatch('PAR-NEW', {
+    HORA_CITACION: new Date(2000, 0, 1, 9, 15, 0, 0),
+    HORA_PARTIDO: new Date(2000, 0, 1, 10, 30, 0, 0)
+  }, 'coach');
+
+  assert.equal(updated.HORA_CITACION, '09:15');
+  assert.equal(updated.HORA_PARTIDO, '10:30');
+  assert.equal(rows[0].HORA_CITACION, '09:15');
+  assert.equal(rows[0].HORA_PARTIDO, '10:30');
 });
 
 test('MATCH_DURATION_TEST requires positive integer duration', () => {
