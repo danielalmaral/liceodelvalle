@@ -3,6 +3,7 @@ function createAttendanceFoundationService(dependencies) {
   var sessionRepository = dependencies.sessionRepository;
   var attendanceRepository = dependencies.attendanceRepository;
   var studentRepository = dependencies.studentRepository;
+  var matchRepository = dependencies.matchRepository;
   var configService = dependencies.configService;
   var idGenerator = dependencies.idGenerator || {};
   var clock = dependencies.clock || { now: function() { return new Date(); } };
@@ -47,7 +48,44 @@ function createAttendanceFoundationService(dependencies) {
 
   function getSessions() {
     var sessions = sessionRepository.getAll().map(normalizeSession);
+    var matchById = {};
+
+    if (matchRepository) {
+      matchRepository.getAll().forEach(function(match) {
+        matchById[match.PARTIDO_ID] = match;
+      });
+    }
+
     utils.assertUnique(sessions, function(session) { return session.sesionId; }, 'SESSION_DUPLICATE_ID');
+
+    sessions.forEach(function(session) {
+      if (session.tipo === 'ENTRENAMIENTO' && session.partidoId) {
+        throw utils.createDomainError('SESSION_TRAINING_MATCH_NOT_EMPTY', session.sesionId);
+      }
+
+      if (session.tipo === 'PARTIDO') {
+        if (!session.partidoId) {
+          throw utils.createDomainError('SESSION_MATCH_REQUIRED', session.sesionId);
+        }
+
+        if (session.competencia === 'GENERAL') {
+          throw utils.createDomainError('SESSION_MATCH_COMPETITION_INVALID', session.sesionId);
+        }
+
+        if (matchRepository) {
+          var match = matchById[session.partidoId];
+
+          if (!match) {
+            throw utils.createDomainError('SESSION_MATCH_FK', session.partidoId);
+          }
+
+          if (match.COMPETENCIA !== session.competencia) {
+            throw utils.createDomainError('SESSION_MATCH_COMPETITION_ALIGNMENT', session.sesionId);
+          }
+        }
+      }
+    });
+
     return sessions;
   }
 
