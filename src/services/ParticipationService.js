@@ -185,6 +185,14 @@ function createParticipationService(dependencies) {
       throw utils.createDomainError('PARTICIPATION_ATTENDANCE_STATE_MISMATCH', studentId);
     }
 
+    if ((attendanceState === 'A' || attendanceState === 'R') !== attended) {
+      throw utils.createDomainError('PARTICIPATION_ATTENDANCE_PRESENCE_MISMATCH', studentId);
+    }
+
+    if (!attended && (goals !== 0 || yellow !== 0 || red !== 0)) {
+      throw utils.createDomainError('PARTICIPATION_ABSENT_STATS', studentId);
+    }
+
     assertUniqueParticipation(participationId, matchId, studentId, currentId || '');
 
     return {
@@ -261,24 +269,76 @@ function createParticipationService(dependencies) {
     var enabled = match && configService.getBoolean(match.competencia === 'A' ? 'CONTROL_MINUTOS_A' : 'CONTROL_MINUTOS_B');
     var threshold = configService.getInteger('ALERTA_SUPLENCIAS_CONSECUTIVAS');
     var alerts = [];
+    var matchById = {};
+    var authoritativeByMatch = {};
+    var participationByPair = {};
 
     if (!enabled) {
       return alerts;
     }
 
+    matchService.getMatches().forEach(function(candidate) {
+      matchById[candidate.partidoId] = candidate;
+    });
+
+    convocationRepository.getAll().forEach(function(convocation) {
+      var candidateMatch = matchById[convocation.PARTIDO_ID];
+      if (
+        candidateMatch &&
+        candidateMatch.competencia === match.competencia &&
+        candidateMatch.estado !== 'CANCELADO' &&
+        AUTHORITATIVE_CONVOCATION_STATES.indexOf(convocation.ESTADO) !== -1
+      ) {
+        authoritativeByMatch[convocation.PARTIDO_ID] = convocation.CONVOCATORIA_ID;
+      }
+    });
+
+    getParticipations().forEach(function(record) {
+      participationByPair[record.PARTIDO_ID + '|' + record.ALUMNO_ID] = record;
+    });
+
+    function selectedFor(convocationId, studentId) {
+      return detailRepository.getAll().some(function(detail) {
+        return detail.CONVOCATORIA_ID === convocationId && detail.ALUMNO_ID === studentId && normalizeBoolean(detail.SELECCIONADO_FINAL, 'SELECCIONADO_FINAL');
+      });
+    }
+
+    function sortedRelevantMatches() {
+      return matchService.getMatches().filter(function(candidate) {
+        return authoritativeByMatch[candidate.partidoId] && candidate.competencia === match.competencia && candidate.fecha.getTime() <= match.fecha.getTime();
+      }).sort(function(left, right) {
+        if (left.fecha.getTime() !== right.fecha.getTime()) {
+          return left.fecha.getTime() - right.fecha.getTime();
+        }
+        if (left.horaPartido !== right.horaPartido) {
+          return String(left.horaPartido).localeCompare(String(right.horaPartido));
+        }
+        return String(left.partidoId).localeCompare(String(right.partidoId));
+      });
+    }
+
     currentRecords.forEach(function(record) {
       var zeroCount = 0;
-      getParticipations().filter(function(candidate) {
-        return candidate.ALUMNO_ID === record.ALUMNO_ID && candidate.CONVOCATORIA_ID !== record.CONVOCATORIA_ID;
-      }).forEach(function(candidate) {
-        if (Number(candidate.MINUTOS_JUGADOS) === 0) {
+      var history = sortedRelevantMatches().reverse();
+
+      history.some(function(candidateMatch) {
+        var convocationId = authoritativeByMatch[candidateMatch.partidoId];
+        var participation;
+
+        if (!selectedFor(convocationId, record.ALUMNO_ID)) {
+          return false;
+        }
+
+        participation = candidateMatch.partidoId === matchId ? record : participationByPair[candidateMatch.partidoId + '|' + record.ALUMNO_ID];
+        if (!participation || Number(participation.MINUTOS_JUGADOS) > 0) {
+          return true;
+        }
+
+        if (Number(participation.MINUTOS_JUGADOS) === 0) {
           zeroCount += 1;
         }
+        return false;
       });
-
-      if (Number(record.MINUTOS_JUGADOS) === 0) {
-        zeroCount += 1;
-      }
 
       if (zeroCount >= threshold) {
         alerts.push({ code: 'LOW_PARTICIPATION_STREAK', studentId: record.ALUMNO_ID, matchId: matchId });
@@ -298,6 +358,10 @@ function createParticipationService(dependencies) {
 
     if (!match) {
       throw utils.createDomainError('PARTICIPATION_MATCH_FK', matchId);
+    }
+
+    if (match.estado !== 'JUGADO') {
+      return { ready: false, errors: ['MATCH_NOT_PLAYED'], alerts: [] };
     }
 
     convocationRepository.getAll().forEach(function(convocation) {

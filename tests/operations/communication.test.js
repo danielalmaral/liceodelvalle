@@ -9,6 +9,7 @@ require('../../src/domain/MatchContracts');
 const { createConfigService } = require('../../src/config/ConfigService');
 const { createMatchService } = require('../../src/services/MatchService');
 const { createCommunicationService } = require('../../src/services/CommunicationService');
+const { createAppsScriptMailAdapter } = require('../../src/adapters/AppsScriptMailAdapter');
 const { completeConfigRows } = require('../config/config-fixtures');
 
 function config(overrides = {}) {
@@ -205,4 +206,61 @@ test('COMMUNICATION_REFERENCE_CARDINALITY_TEST keeps attendance pointer as summa
   state.service.sendPendingCommunications();
   assert.equal(state.service.getCommunications().length, 2);
   assert.equal(state.attendanceRepository.getAll()[0].AVISO_ENVIADO, true);
+});
+
+test('COMMUNICATION_POINTER_FAILURE_NO_DUPLICATE_RETRY_TEST does not retry delivered mail after pointer failure', () => {
+  let sent = 0;
+  const communicationRows = [communication()];
+  const failingAttendanceRepository = {
+    getAll() { return [attendance()]; },
+    updateById() { throw new Error('pointer failed'); }
+  };
+  const svc = createCommunicationService({
+    attendanceRepository: failingAttendanceRepository,
+    clock: { now: () => new Date('2026-02-01T12:00:00Z') },
+    communicationRepository: createArrayRepository(communicationRows),
+    configService: config(),
+    convocationRepository: createArrayRepository([convocation()]),
+    detailRepository: createArrayRepository([detail()]),
+    mailAdapter: { send() { sent += 1; } },
+    matchService: createMatchService({ matchRepository: createArrayRepository([match()]), utils }),
+    studentRepository: createArrayRepository([student()]),
+    tutorRepository: createArrayRepository([tutor()]),
+    utils
+  });
+  const result = svc.sendPendingCommunications()[0];
+  assert.equal(result.warning, 'COMMUNICATION_SUMMARY_POINTER_FAILED');
+  assert.equal(communicationRows[0].ESTADO, 'ENVIADO');
+  assert.throws(() => svc.retryCommunication('COM-001'), /COMMUNICATION_RETRY_INVALID_STATE/);
+  assert.equal(sent, 1);
+});
+
+test('COMMUNICATION_SEND_CONFIG_DISABLED_TEST skips pending send when config disabled', () => {
+  let sent = 0;
+  const state = service({ communications: [communication()], config: { AVISO_AUSENCIA_EMAIL: 'NO' }, mailAdapter: { send() { sent += 1; } } });
+  const result = state.service.sendPendingCommunications()[0];
+  assert.equal(result.skipped, true);
+  assert.equal(state.service.getCommunications()[0].ESTADO, 'PENDIENTE');
+  assert.equal(sent, 0);
+});
+
+test('COMMUNICATION_ABSENCE_SOURCE_STATE_TEST only generates absence notices for pending F', () => {
+  assert.throws(() => service({ attendances: [attendance({ ESTADO: 'A' })] }).service.generateAbsenceCommunications('AST-001'), /COMMUNICATION_ABSENCE_SOURCE_INVALID/);
+});
+
+test('COMMUNICATION_TUTOR_BOOLEAN_FAIL_CLOSED_TEST rejects invalid tutor flags', () => {
+  assert.throws(() => service({ tutors: [tutor({ ACTIVO: 'yes' })] }).service.generateAbsenceCommunications('AST-001'), /COMMUNICATION_TUTOR_BOOLEAN_INVALID/);
+});
+
+test('APPS_SCRIPT_MAIL_ADAPTER_LAZY_TEST does not call provider during construction', () => {
+  let sent = 0;
+  const adapter = createAppsScriptMailAdapter({ sendEmail() { sent += 1; } });
+  assert.equal(sent, 0);
+  adapter.send({ to: 'family@example.invalid', subject: 'Test', body: 'Body' });
+  assert.equal(sent, 1);
+});
+
+test('APPS_SCRIPT_MAIL_ADAPTER_PROVIDER_REQUIRED_TEST fails only when send is attempted', () => {
+  const adapter = createAppsScriptMailAdapter(null);
+  assert.throws(() => adapter.send({ to: 'family@example.invalid', subject: 'Test', body: 'Body' }), /MAIL_PROVIDER_REQUIRED/);
 });

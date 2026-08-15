@@ -249,8 +249,111 @@ test('RED_CARD_REVIEW_REQUIRED_TEST surfaces red review alert', () => {
 test('LOW_PARTICIPATION_STREAK_CONFIG_TEST uses configured zero-minute streak', () => {
   const svc = service({
     config: { ALERTA_SUPLENCIAS_CONSECUTIVAS: '2' },
+    matches: [match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' }), match()],
+    convocations: [convocation({ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD' }), convocation()],
+    details: [detail({ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD' }), detail()],
     participations: [{ ...input({ MINUTOS_JUGADOS: 0 }), PARTICIPACION_ID: 'PRT-OLD', PARTIDO_ID: 'PAR-OLD', CONVOCATORIA_ID: 'CON-OLD' }]
   });
   svc.createParticipation(input({ MINUTOS_JUGADOS: 0 }));
   assert.equal(svc.validateMatchParticipationReadiness('PAR-001').alerts.some((alert) => alert.code === 'LOW_PARTICIPATION_STREAK'), true);
+});
+
+test('PARTICIPATION_ATTENDANCE_PRESENCE_TEST accepts present attendance states as attended', () => {
+  assert.equal(service({ attendances: [attendance({ ESTADO: 'R' })] }).createParticipation(input({ ASISTENCIA_ESTADO: 'R', ASISTIO: true })).ASISTIO, true);
+});
+
+test('PARTICIPATION_PRESENT_WITH_ABSENCE_STATE_TEST rejects present flag with absence state', () => {
+  assert.throws(() => service({ attendances: [attendance({ ESTADO: 'F' })] }).createParticipation(input({ ASISTENCIA_ESTADO: 'F', ASISTIO: true })), /PARTICIPATION_ATTENDANCE_PRESENCE_MISMATCH/);
+});
+
+test('PARTICIPATION_ABSENT_GOALS_ZERO_TEST rejects stats for absent player', () => {
+  assert.throws(() => service({ attendances: [attendance({ ESTADO: 'F' })] }).createParticipation(input({ ASISTENCIA_ESTADO: 'F', ASISTIO: false, CONDICION_INICIAL: '', MINUTOS_JUGADOS: 0, GOLES: 1, CALIFICACION: '' })), /PARTICIPATION_ABSENT_STATS/);
+});
+
+test('PARTICIPATION_ABSENT_CARDS_ZERO_TEST rejects cards for absent player', () => {
+  assert.throws(() => service({ attendances: [attendance({ ESTADO: 'F' })] }).createParticipation(input({ ASISTENCIA_ESTADO: 'F', ASISTIO: false, CONDICION_INICIAL: '', MINUTOS_JUGADOS: 0, AMARILLAS: 1, CALIFICACION: '' })), /PARTICIPATION_ABSENT_STATS/);
+});
+
+test('PARTICIPATION_ABSENT_STATS_ZERO_TEST rejects any non-zero absent stat', () => {
+  assert.throws(() => service({ attendances: [attendance({ ESTADO: 'F' })] }).createParticipation(input({ ASISTENCIA_ESTADO: 'F', ASISTIO: false, CONDICION_INICIAL: '', MINUTOS_JUGADOS: 0, ROJAS: 1, CALIFICACION: '' })), /PARTICIPATION_ABSENT_STATS/);
+});
+
+test('PARTICIPATION_PROGRAMMED_NOT_READY_TEST prevents closing stats before match played', () => {
+  const svc = service({ matches: [match({ ESTADO: 'PROGRAMADO', GOLES_FAVOR: '', GOLES_CONTRA: '' })] });
+  assert.deepEqual(svc.validateMatchParticipationReadiness('PAR-001').errors, ['MATCH_NOT_PLAYED']);
+});
+
+test('LOW_PARTICIPATION_CONSECUTIVE_STREAK_TEST counts consecutive selected zero-minute participations', () => {
+  const svc = service({
+    config: { ALERTA_SUPLENCIAS_CONSECUTIVAS: '2' },
+    matches: [match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' }), match()],
+    convocations: [convocation({ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD' }), convocation()],
+    details: [detail({ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD' }), detail()],
+    participations: [{ ...input({ MINUTOS_JUGADOS: 0 }), PARTICIPACION_ID: 'PRT-OLD', PARTIDO_ID: 'PAR-OLD', CONVOCATORIA_ID: 'CON-OLD' }]
+  });
+  svc.createParticipation(input({ MINUTOS_JUGADOS: 0 }));
+  assert.equal(svc.validateMatchParticipationReadiness('PAR-001').alerts.some((alert) => alert.code === 'LOW_PARTICIPATION_STREAK'), true);
+});
+
+test('LOW_PARTICIPATION_NON_CONSECUTIVE_ZERO_TEST ignores non selected gaps', () => {
+  const svc = service({
+    config: { ALERTA_SUPLENCIAS_CONSECUTIVAS: '2' },
+    matches: [match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' }), match({ PARTIDO_ID: 'PAR-MID', FECHA: '2026-01-15' }), match()],
+    convocations: [convocation({ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD' }), convocation({ CONVOCATORIA_ID: 'CON-MID', PARTIDO_ID: 'PAR-MID' }), convocation()],
+    details: [detail({ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD' }), detail({ DETALLE_ID: 'DET-MID', CONVOCATORIA_ID: 'CON-MID' }), detail()],
+    participations: [
+      { ...input({ MINUTOS_JUGADOS: 0 }), PARTICIPACION_ID: 'PRT-OLD', PARTIDO_ID: 'PAR-OLD', CONVOCATORIA_ID: 'CON-OLD' },
+      { ...input({ MINUTOS_JUGADOS: 10 }), PARTICIPACION_ID: 'PRT-MID', PARTIDO_ID: 'PAR-MID', CONVOCATORIA_ID: 'CON-MID' }
+    ]
+  });
+  svc.createParticipation(input({ MINUTOS_JUGADOS: 0 }));
+  assert.equal(svc.validateMatchParticipationReadiness('PAR-001').alerts.some((alert) => alert.code === 'LOW_PARTICIPATION_STREAK'), false);
+});
+
+test('LOW_PARTICIPATION_POSITIVE_MINUTES_RESETS_TEST stops on positive minutes', () => {
+  const svc = service({
+    config: { ALERTA_SUPLENCIAS_CONSECUTIVAS: '2' },
+    matches: [match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' }), match()],
+    convocations: [convocation({ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD' }), convocation()],
+    details: [detail({ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD' }), detail()],
+    participations: [{ ...input({ MINUTOS_JUGADOS: 15 }), PARTICIPACION_ID: 'PRT-OLD', PARTIDO_ID: 'PAR-OLD', CONVOCATORIA_ID: 'CON-OLD' }]
+  });
+  svc.createParticipation(input({ MINUTOS_JUGADOS: 0 }));
+  assert.equal(svc.validateMatchParticipationReadiness('PAR-001').alerts.some((alert) => alert.code === 'LOW_PARTICIPATION_STREAK'), false);
+});
+
+test('LOW_PARTICIPATION_COMPETITION_SCOPED_TEST ignores other competition history', () => {
+  const svc = service({
+    config: { ALERTA_SUPLENCIAS_CONSECUTIVAS: '2' },
+    matches: [match({ PARTIDO_ID: 'PAR-B', COMPETENCIA: 'B', FECHA: '2026-01-01' }), match()],
+    convocations: [convocation({ CONVOCATORIA_ID: 'CON-B', PARTIDO_ID: 'PAR-B', COMPETENCIA: 'B' }), convocation()],
+    details: [detail({ DETALLE_ID: 'DET-B', CONVOCATORIA_ID: 'CON-B', COMPETENCIA_SNAPSHOT: 'B' }), detail()],
+    participations: [{ ...input({ MINUTOS_JUGADOS: 0 }), PARTICIPACION_ID: 'PRT-B', PARTIDO_ID: 'PAR-B', CONVOCATORIA_ID: 'CON-B' }]
+  });
+  svc.createParticipation(input({ MINUTOS_JUGADOS: 0 }));
+  assert.equal(svc.validateMatchParticipationReadiness('PAR-001').alerts.some((alert) => alert.code === 'LOW_PARTICIPATION_STREAK'), false);
+});
+
+test('LOW_PARTICIPATION_REPOSITORY_REORDER_TEST uses match chronology', () => {
+  const svc = service({
+    config: { ALERTA_SUPLENCIAS_CONSECUTIVAS: '2' },
+    matches: [match(), match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' })],
+    convocations: [convocation(), convocation({ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD' })],
+    details: [detail(), detail({ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD' })],
+    participations: [{ ...input({ MINUTOS_JUGADOS: 0 }), PARTICIPACION_ID: 'PRT-OLD', PARTIDO_ID: 'PAR-OLD', CONVOCATORIA_ID: 'CON-OLD' }]
+  });
+  svc.createParticipation(input({ MINUTOS_JUGADOS: 0 }));
+  assert.equal(svc.validateMatchParticipationReadiness('PAR-001').alerts.some((alert) => alert.code === 'LOW_PARTICIPATION_STREAK'), true);
+});
+
+test('LOW_PARTICIPATION_CANCELLED_MATCH_IGNORED_TEST ignores cancelled matches', () => {
+  const svc = service({
+    config: { ALERTA_SUPLENCIAS_CONSECUTIVAS: '2' },
+    matches: [match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01', ESTADO: 'CANCELADO', GOLES_FAVOR: '', GOLES_CONTRA: '' }), match()],
+    convocations: [convocation({ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD' }), convocation()],
+    details: [detail({ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD' }), detail()],
+    participations: [{ ...input({ MINUTOS_JUGADOS: 0 }), PARTICIPACION_ID: 'PRT-OLD', PARTIDO_ID: 'PAR-OLD', CONVOCATORIA_ID: 'CON-OLD' }]
+  });
+  svc.createParticipation(input({ MINUTOS_JUGADOS: 0 }));
+  assert.equal(svc.validateMatchParticipationReadiness('PAR-001').alerts.some((alert) => alert.code === 'LOW_PARTICIPATION_STREAK'), false);
 });

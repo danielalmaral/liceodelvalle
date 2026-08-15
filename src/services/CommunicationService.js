@@ -24,7 +24,7 @@ function createCommunicationService(dependencies) {
     try {
       return utils.normalizeStrictBoolean(value, 'COMUNICACIONES');
     } catch (error) {
-      return false;
+      throw utils.createDomainError('COMMUNICATION_TUTOR_BOOLEAN_INVALID', 'COMUNICACIONES');
     }
   }
 
@@ -131,6 +131,10 @@ function createCommunicationService(dependencies) {
       throw utils.createDomainError('COMMUNICATION_ABSENCE_NOT_FOUND', attendanceId);
     }
 
+    if (attendance.ESTADO !== 'F') {
+      throw utils.createDomainError('COMMUNICATION_ABSENCE_SOURCE_INVALID', attendanceId);
+    }
+
     body = 'Hoy ' + studentName(attendance.ALUMNO_ID) + ' no registro asistencia. Si existe motivo o justificacion, por favor informenos para actualizar el registro.';
     eligibleTutors(attendance.ALUMNO_ID, 'RECIBE_AUSENCIAS').forEach(function(tutor) {
       created.push(createIfMissing('AUSENCIA', attendanceId, attendance.ALUMNO_ID, tutor, 'Aviso de asistencia', body));
@@ -212,8 +216,25 @@ function createCommunicationService(dependencies) {
     }
   }
 
+  function canSendByConfig(record) {
+    if (record.TIPO === 'AUSENCIA') {
+      return configService.getBoolean('AVISO_AUSENCIA_EMAIL');
+    }
+
+    if (record.TIPO === 'CONVOCATORIA') {
+      return configService.getBoolean('CONVOCATORIA_EMAIL');
+    }
+
+    return false;
+  }
+
   function sendCommunication(record) {
     var next = copyRecord(record);
+
+    if (!canSendByConfig(record)) {
+      return { ok: true, skipped: true, communication: next };
+    }
+
     try {
       mailAdapter.send({ to: record.DESTINATARIO, subject: record.ASUNTO, body: record.CUERPO });
       next.ESTADO = 'ENVIADO';
@@ -221,7 +242,11 @@ function createCommunicationService(dependencies) {
       next.ERROR = '';
       next.INTENTOS = Number(record.INTENTOS || 0) + 1;
       communicationRepository.updateById('COMUNICACION_ID', record.COMUNICACION_ID, next);
-      markAbsenceSummaryPointer(next);
+      try {
+        markAbsenceSummaryPointer(next);
+      } catch (pointerError) {
+        return { ok: true, warning: 'COMMUNICATION_SUMMARY_POINTER_FAILED', communication: next };
+      }
       return { ok: true, communication: next };
     } catch (error) {
       next.ESTADO = 'ERROR';
