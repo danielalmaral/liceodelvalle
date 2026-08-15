@@ -9,6 +9,16 @@ function createConvocationService(dependencies) {
   var rotationService = dependencies.rotationService;
   var idGenerator = dependencies.idGenerator || {};
   var clock = dependencies.clock || { now: function() { return new Date(); } };
+  var AUTHORITATIVE_STATES = ['APROBADA', 'ENVIADA', 'CERRADA'];
+  var POSITIONS = ['PO', 'DEF', 'MED', 'DEL'];
+
+  function copyRecord(record) {
+    var next = {};
+    Object.keys(record).forEach(function(key) {
+      next[key] = record[key];
+    });
+    return next;
+  }
 
   function snapshotConfig(competition) {
     var total = configService.getInteger(competition === 'A' ? 'CONVOCADOS_A' : 'CONVOCADOS_B');
@@ -35,15 +45,21 @@ function createConvocationService(dependencies) {
     return { A1: 4, A2: 3, B1: 2, B2: 1 }[level] || 0;
   }
 
+  function isAuthoritative(convocation) {
+    return AUTHORITATIVE_STATES.indexOf(convocation.ESTADO) !== -1;
+  }
+
+  function activeMatch(convocation) {
+    var match = matchService.getMatchById(convocation.PARTIDO_ID);
+    return match && match.estado !== 'CANCELADO';
+  }
+
   function previousSelectionCount(studentId, competition) {
     var historical = {};
 
     convocationRepository.getAll().forEach(function(convocation) {
-      if (convocation.COMPETENCIA === competition && ['APROBADA', 'ENVIADA', 'CERRADA'].indexOf(convocation.ESTADO) !== -1) {
-        var match = matchService.getMatchById(convocation.PARTIDO_ID);
-        if (match && match.estado !== 'CANCELADO') {
-          historical[convocation.CONVOCATORIA_ID] = true;
-        }
+      if (convocation.COMPETENCIA === competition && isAuthoritative(convocation) && activeMatch(convocation)) {
+        historical[convocation.CONVOCATORIA_ID] = true;
       }
     });
 
@@ -98,12 +114,27 @@ function createConvocationService(dependencies) {
     return candidate.POSICION_PRINCIPAL_SNAPSHOT;
   }
 
+  function isAllowedPosition(detail, position) {
+    return POSITIONS.indexOf(position) !== -1 && (position === detail.POSICION_PRINCIPAL_SNAPSHOT || position === detail.POSICION_SECUNDARIA_SNAPSHOT);
+  }
+
+  function rankedEligible(details, competition) {
+    return details.filter(function(detail) {
+      return detail.ELEGIBILITY_STATUS === 'ELIGIBLE';
+    }).sort(function(left, right) {
+      return compareCandidates(competition, left, right);
+    });
+  }
+
   function selectRecommended(details, snapshots, competition) {
-    var eligible = details.filter(function(detail) { return detail.ELEGIBILITY_STATUS === 'ELIGIBLE'; });
+    var eligible = rankedEligible(details, competition);
     var needed = { PO: snapshots.minPo, DEF: snapshots.minDef, MED: snapshots.minMed, DEL: snapshots.minDel };
     var selected = [];
+    var priority = eligible.filter(function(detail) { return detail.PRIORIDAD_ROTACION; });
 
-    eligible.sort(function(left, right) { return compareCandidates(competition, left, right); });
+    eligible.forEach(function(detail, index) {
+      detail.ORDEN_PRIORIDAD = index + 1;
+    });
 
     function addCandidate(candidate, assignedPosition) {
       if (selected.indexOf(candidate) !== -1 || selected.length >= snapshots.total) {
@@ -120,7 +151,7 @@ function createConvocationService(dependencies) {
       }
     }
 
-    eligible.filter(function(detail) { return detail.PRIORIDAD_ROTACION; }).forEach(function(candidate) {
+    priority.forEach(function(candidate) {
       addCandidate(candidate, positionFor(candidate, needed));
     });
 
@@ -139,7 +170,8 @@ function createConvocationService(dependencies) {
     return {
       selected: selected,
       insufficient: eligible.length < snapshots.total,
-      positionConflict: Object.keys(needed).some(function(position) { return needed[position] > 0; })
+      positionConflict: Object.keys(needed).some(function(position) { return needed[position] > 0; }),
+      priorityOverflow: priority.length > snapshots.total || priority.some(function(detail) { return !detail.SELECCIONADO_FINAL; })
     };
   }
 
@@ -151,7 +183,7 @@ function createConvocationService(dependencies) {
 
     return studentRepository.getAll().filter(function(student) {
       return student.COMPETENCIA_BASE === competition;
-    }).map(function(student, index) {
+    }).map(function(student) {
       var eligibility = eligibilityByStudent[student.ALUMNO_ID];
       var rotation = rotationService.previewUpdate(eligibility, false);
 
@@ -178,9 +210,45 @@ function createConvocationService(dependencies) {
         MOTIVO_CAMBIO: '',
         ROTATION_EXCEPTION: false,
         ROTACION_DESPUES: rotation.rotationBefore,
-        ORDEN_PRIORIDAD: index + 1
+        ORDEN_PRIORIDAD: ''
       };
     });
+  }
+
+  function assertUniqueBy(records, selector, code) {
+    var seen = {};
+    records.forEach(function(record) {
+      var key = selector(record);
+      if (!key || seen[key]) {
+        throw utils.createDomainError(code, key || '');
+      }
+      seen[key] = true;
+    });
+  }
+
+  function assertGeneratedIntegrity(convocationId, details) {
+    convocationRepository.getAll().forEach(function(convocation) {
+      if (convocation.CONVOCATORIA_ID === convocationId) {
+        throw utils.createDomainError('CONVOCATION_DUPLICATE_ID', convocationId);
+      }
+    });
+
+    assertUniqueBy(details, function(detail) { return detail.DETALLE_ID; }, 'CONVOCATION_DETAIL_DUPLICATE_ID');
+    assertUniqueBy(details, function(detail) { return detail.ALUMNO_ID; }, 'CONVOCATION_DETAIL_DUPLICATE_STUDENT');
+  }
+
+  function observations(selection) {
+    var values = [];
+
+    if (selection.insufficient) {
+      values.push('INSUFFICIENT_ELIGIBLE_PLAYERS');
+    }
+
+    if (selection.positionConflict || selection.priorityOverflow) {
+      values.push('ROTATION_POSITION_CONFLICT');
+    }
+
+    return values.join('|');
   }
 
   function generateConvocation(matchId, actor) {
@@ -199,15 +267,8 @@ function createConvocationService(dependencies) {
 
     var details = buildDetails(convocationId, match, match.competencia);
     var selection = selectRecommended(details, snapshots, match.competencia);
-    var alerts = 0;
-
-    if (selection.insufficient) {
-      alerts += 1;
-    }
-
-    if (selection.positionConflict) {
-      alerts += 1;
-    }
+    var alertText = observations(selection);
+    assertGeneratedIntegrity(convocationId, details);
 
     var convocation = {
       CONVOCATORIA_ID: convocationId,
@@ -226,25 +287,225 @@ function createConvocationService(dependencies) {
       APROBADA_POR: '',
       ENVIADA_EN: '',
       TOTAL_SELECCIONADOS: selection.selected.length,
-      TOTAL_ALERTAS: alerts,
-      OBSERVACIONES: selection.insufficient ? 'INSUFFICIENT_ELIGIBLE_PLAYERS' : (selection.positionConflict ? 'ROTATION_POSITION_CONFLICT' : '')
+      TOTAL_ALERTAS: alertText ? alertText.split('|').length : 0,
+      OBSERVACIONES: alertText
     };
 
     convocationRepository.insert(convocation);
-    details.forEach(function(detail, index) {
-      detail.ORDEN_PRIORIDAD = index + 1;
+    details.forEach(function(detail) {
       detailRepository.insert(detail);
     });
 
     return {
-      convocation: convocation,
-      details: details
+      convocation: copyRecord(convocation),
+      details: details.map(copyRecord)
     };
   }
 
-  function selectedDetails(convocationId) {
+  function getConvocation(convocationId) {
+    return convocationRepository.getAll().filter(function(candidate) {
+      return candidate.CONVOCATORIA_ID === convocationId;
+    })[0] || null;
+  }
+
+  function getDetails(convocationId) {
     return detailRepository.getAll().filter(function(detail) {
-      return detail.CONVOCATORIA_ID === convocationId && detail.SELECCIONADO_FINAL;
+      return detail.CONVOCATORIA_ID === convocationId;
+    });
+  }
+
+  function assertProposal(convocation) {
+    if (convocation.ESTADO !== 'PROPUESTA') {
+      throw utils.createDomainError('CONVOCATION_INVALID_STATE_TRANSITION', convocation.CONVOCATORIA_ID);
+    }
+  }
+
+  function updateSelectionTotal(convocation) {
+    var nextConvocation = copyRecord(convocation);
+    nextConvocation.TOTAL_SELECCIONADOS = getDetails(convocation.CONVOCATORIA_ID).filter(function(detail) {
+      return detail.SELECCIONADO_FINAL;
+    }).length;
+    convocationRepository.updateById('CONVOCATORIA_ID', convocation.CONVOCATORIA_ID, nextConvocation);
+    return nextConvocation;
+  }
+
+  function setFinalSelection(convocationId, alumnoId, selected, reason) {
+    var convocation = getConvocation(convocationId);
+    var detail = null;
+    var nextDetail;
+
+    if (!convocation) {
+      throw utils.createDomainError('CONVOCATION_NOT_FOUND', convocationId);
+    }
+
+    assertProposal(convocation);
+    detail = getDetails(convocationId).filter(function(candidate) {
+      return candidate.ALUMNO_ID === alumnoId;
+    })[0];
+
+    if (!detail) {
+      throw utils.createDomainError('CONVOCATION_DETAIL_NOT_FOUND', alumnoId);
+    }
+
+    if (selected && detail.ELEGIBILITY_STATUS === 'INELIGIBLE') {
+      throw utils.createDomainError('CONVOCATION_MANUAL_INELIGIBLE', alumnoId);
+    }
+
+    if (selected && detail.ELEGIBILITY_STATUS === 'PENDING') {
+      throw utils.createDomainError('CONVOCATION_MANUAL_PENDING', alumnoId);
+    }
+
+    if (Boolean(selected) !== Boolean(detail.RECOMENDADO_SISTEMA) && !reason) {
+      throw utils.createDomainError('CONVOCATION_MANUAL_REASON_REQUIRED', alumnoId);
+    }
+
+    if (!selected && detail.PRIORIDAD_ROTACION && !reason) {
+      throw utils.createDomainError('ROTATION_EXCEPTION_REASON_REQUIRED', alumnoId);
+    }
+
+    nextDetail = copyRecord(detail);
+    nextDetail.SELECCIONADO_FINAL = Boolean(selected);
+    nextDetail.CAMBIO_MANUAL = Boolean(selected) !== Boolean(detail.RECOMENDADO_SISTEMA);
+    nextDetail.MOTIVO_CAMBIO = reason || nextDetail.MOTIVO_CAMBIO || '';
+    nextDetail.ROTATION_EXCEPTION = !selected && detail.PRIORIDAD_ROTACION;
+
+    if (selected && !nextDetail.POSICION_ASIGNADA) {
+      nextDetail.POSICION_ASIGNADA = nextDetail.POSICION_PRINCIPAL_SNAPSHOT;
+    }
+
+    if (!selected) {
+      nextDetail.POSICION_ASIGNADA = '';
+    }
+
+    detailRepository.updateById('DETALLE_ID', detail.DETALLE_ID, nextDetail);
+    updateSelectionTotal(convocation);
+    return copyRecord(nextDetail);
+  }
+
+  function assignPlayerPosition(convocationId, alumnoId, position, reason) {
+    var convocation = getConvocation(convocationId);
+    var detail;
+    var nextDetail;
+
+    if (!convocation) {
+      throw utils.createDomainError('CONVOCATION_NOT_FOUND', convocationId);
+    }
+
+    assertProposal(convocation);
+    detail = getDetails(convocationId).filter(function(candidate) {
+      return candidate.ALUMNO_ID === alumnoId;
+    })[0];
+
+    if (!detail) {
+      throw utils.createDomainError('CONVOCATION_DETAIL_NOT_FOUND', alumnoId);
+    }
+
+    if (!detail.SELECCIONADO_FINAL) {
+      throw utils.createDomainError('CONVOCATION_POSITION_UNSELECTED', alumnoId);
+    }
+
+    if (!isAllowedPosition(detail, position)) {
+      throw utils.createDomainError('CONVOCATION_ASSIGNED_POSITION_INVALID', alumnoId);
+    }
+
+    if (position !== detail.POSICION_ASIGNADA && !reason) {
+      throw utils.createDomainError('CONVOCATION_MANUAL_REASON_REQUIRED', alumnoId);
+    }
+
+    nextDetail = copyRecord(detail);
+    nextDetail.POSICION_ASIGNADA = position;
+    nextDetail.CAMBIO_MANUAL = nextDetail.CAMBIO_MANUAL || position !== detail.POSICION_ASIGNADA;
+    nextDetail.MOTIVO_CAMBIO = reason || nextDetail.MOTIVO_CAMBIO || '';
+    detailRepository.updateById('DETALLE_ID', detail.DETALLE_ID, nextDetail);
+    return copyRecord(nextDetail);
+  }
+
+  function assertDetailIntegrity(convocation, details) {
+    assertUniqueBy(details, function(detail) { return detail.DETALLE_ID; }, 'CONVOCATION_DETAIL_DUPLICATE_ID');
+    assertUniqueBy(details, function(detail) { return detail.ALUMNO_ID; }, 'CONVOCATION_DETAIL_DUPLICATE_STUDENT');
+
+    details.forEach(function(detail) {
+      utils.requireText(detail.DETALLE_ID, 'DETALLE_ID');
+      utils.requireText(detail.ALUMNO_ID, 'ALUMNO_ID');
+
+      if (detail.CONVOCATORIA_ID !== convocation.CONVOCATORIA_ID) {
+        throw utils.createDomainError('CONVOCATION_DETAIL_FOREIGN_KEY', detail.DETALLE_ID);
+      }
+
+      if (detail.COMPETENCIA_SNAPSHOT !== convocation.COMPETENCIA) {
+        throw utils.createDomainError('CONVOCATION_DETAIL_COMPETITION', detail.DETALLE_ID);
+      }
+
+      if (detail.SELECCIONADO_FINAL) {
+        if (POSITIONS.indexOf(detail.POSICION_ASIGNADA) === -1) {
+          throw utils.createDomainError('CONVOCATION_ASSIGNED_POSITION_ENUM', detail.ALUMNO_ID);
+        }
+
+        if (!isAllowedPosition(detail, detail.POSICION_ASIGNADA)) {
+          throw utils.createDomainError('CONVOCATION_ASSIGNED_POSITION_INVALID', detail.ALUMNO_ID);
+        }
+      }
+    });
+  }
+
+  function assertCurrentAuthority(convocation, details) {
+    var currentByStudent = {};
+    var match = matchService.getMatchById(convocation.PARTIDO_ID);
+
+    eligibilityService.evaluateMatch(convocation.PARTIDO_ID).forEach(function(eligibility) {
+      currentByStudent[eligibility.studentId] = eligibility;
+    });
+
+    details.forEach(function(detail) {
+      var current = currentByStudent[detail.ALUMNO_ID];
+      var rotation;
+
+      if (!current) {
+        throw utils.createDomainError('CONVOCATION_STALE_PROPOSAL', detail.ALUMNO_ID);
+      }
+
+      if (current.status !== detail.ELEGIBILITY_STATUS || current.reason !== detail.MOTIVO_NO_ELEGIBLE || current.fiSourceAttendanceId !== detail.FI_ORIGEN_ID) {
+        throw utils.createDomainError('CONVOCATION_STALE_PROPOSAL', detail.ALUMNO_ID);
+      }
+
+      rotation = rotationService.previewUpdate(current, false);
+
+      if (rotation.rotationBefore !== Number(detail.ROTACION_ANTES) || rotation.priorityRotation !== Boolean(detail.PRIORIDAD_ROTACION)) {
+        throw utils.createDomainError('CONVOCATION_STALE_PROPOSAL', detail.ALUMNO_ID);
+      }
+    });
+
+    if (!match || match.estado === 'CANCELADO') {
+      throw utils.createDomainError('CONVOCATION_APPROVAL_CANCELLED_MATCH', convocation.CONVOCATORIA_ID);
+    }
+  }
+
+  function assertNoPreviousAuthoritativeForMatch(convocation) {
+    convocationRepository.getAll().forEach(function(candidate) {
+      if (candidate.CONVOCATORIA_ID !== convocation.CONVOCATORIA_ID && candidate.PARTIDO_ID === convocation.PARTIDO_ID && isAuthoritative(candidate) && activeMatch(candidate)) {
+        throw utils.createDomainError('CONVOCATION_MATCH_ALREADY_APPROVED', convocation.PARTIDO_ID);
+      }
+    });
+  }
+
+  function assertFiNotConsumedTwice(convocation, details) {
+    var fiIds = {};
+    details.forEach(function(detail) {
+      if (detail.ELEGIBILITY_STATUS === 'INELIGIBLE' && detail.MOTIVO_NO_ELEGIBLE === 'FI_BLOCK' && detail.FI_ORIGEN_ID) {
+        fiIds[detail.FI_ORIGEN_ID] = true;
+      }
+    });
+
+    detailRepository.getAll().forEach(function(detail) {
+      if (!fiIds[detail.FI_ORIGEN_ID] || detail.CONVOCATORIA_ID === convocation.CONVOCATORIA_ID) {
+        return;
+      }
+
+      convocationRepository.getAll().forEach(function(candidate) {
+        if (candidate.CONVOCATORIA_ID === detail.CONVOCATORIA_ID && isAuthoritative(candidate) && activeMatch(candidate)) {
+          throw utils.createDomainError('CONVOCATION_STALE_PROPOSAL', detail.FI_ORIGEN_ID);
+        }
+      });
     });
   }
 
@@ -253,11 +514,11 @@ function createConvocationService(dependencies) {
       throw utils.createDomainError('CONVOCATION_APPROVAL_ACTOR_REQUIRED', convocation.CONVOCATORIA_ID);
     }
 
-    var match = matchService.getMatchById(convocation.PARTIDO_ID);
-
-    if (!match || match.estado === 'CANCELADO') {
-      throw utils.createDomainError('CONVOCATION_APPROVAL_CANCELLED_MATCH', convocation.CONVOCATORIA_ID);
-    }
+    assertProposal(convocation);
+    assertNoPreviousAuthoritativeForMatch(convocation);
+    assertDetailIntegrity(convocation, details);
+    assertCurrentAuthority(convocation, details);
+    assertFiNotConsumedTwice(convocation, details);
 
     var selected = details.filter(function(detail) { return detail.SELECCIONADO_FINAL; });
 
@@ -294,27 +555,14 @@ function createConvocationService(dependencies) {
   }
 
   function approveConvocation(convocationId, actor) {
-    var convocation = convocationRepository.getAll().filter(function(candidate) {
-      return candidate.CONVOCATORIA_ID === convocationId;
-    })[0];
+    var convocation = getConvocation(convocationId);
+    var details = getDetails(convocationId);
 
     if (!convocation) {
       throw utils.createDomainError('CONVOCATION_NOT_FOUND', convocationId);
     }
 
-    var details = detailRepository.getAll().filter(function(detail) {
-      return detail.CONVOCATORIA_ID === convocationId;
-    });
-
     validateApproval(convocation, details, actor);
-
-    var nextConvocation = {};
-    Object.keys(convocation).forEach(function(key) {
-      nextConvocation[key] = convocation[key];
-    });
-    nextConvocation.ESTADO = 'APROBADA';
-    nextConvocation.APROBADA_EN = clock.now();
-    nextConvocation.APROBADA_POR = actor;
 
     details.forEach(function(detail) {
       var rotation = rotationService.previewUpdate({
@@ -322,20 +570,24 @@ function createConvocationService(dependencies) {
         competition: detail.COMPETENCIA_SNAPSHOT,
         status: detail.ELEGIBILITY_STATUS
       }, detail.SELECCIONADO_FINAL);
-      var nextDetail = {};
-      Object.keys(detail).forEach(function(key) {
-        nextDetail[key] = detail[key];
-      });
+      var nextDetail = copyRecord(detail);
       nextDetail.ROTACION_DESPUES = rotation.rotationAfter;
       detailRepository.updateById('DETALLE_ID', detail.DETALLE_ID, nextDetail);
     });
 
+    var nextConvocation = copyRecord(convocation);
+    nextConvocation.ESTADO = 'APROBADA';
+    nextConvocation.APROBADA_EN = clock.now();
+    nextConvocation.APROBADA_POR = actor;
+    nextConvocation.TOTAL_SELECCIONADOS = details.filter(function(detail) { return detail.SELECCIONADO_FINAL; }).length;
     return convocationRepository.updateById('CONVOCATORIA_ID', convocationId, nextConvocation);
   }
 
   return {
     approveConvocation: approveConvocation,
+    assignPlayerPosition: assignPlayerPosition,
     generateConvocation: generateConvocation,
+    setFinalSelection: setFinalSelection,
     validateApproval: validateApproval
   };
 }

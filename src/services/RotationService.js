@@ -17,23 +17,36 @@ function createRotationService(dependencies) {
   function historicalConvocations(competition) {
     return convocationRepository.getAll().filter(function(convocation) {
       return convocation.COMPETENCIA === competition && isHistoricalConvocation(convocation);
+    }).sort(function(left, right) {
+      var leftMatch = matchService.getMatchById(left.PARTIDO_ID);
+      var rightMatch = matchService.getMatchById(right.PARTIDO_ID);
+      var leftDate = leftMatch && leftMatch.fecha ? leftMatch.fecha.getTime() : 0;
+      var rightDate = rightMatch && rightMatch.fecha ? rightMatch.fecha.getTime() : 0;
+
+      if (leftDate !== rightDate) {
+        return leftDate - rightDate;
+      }
+
+      if ((leftMatch.horaPartido || '') !== (rightMatch.horaPartido || '')) {
+        return String(leftMatch.horaPartido || '').localeCompare(String(rightMatch.horaPartido || ''));
+      }
+
+      return String(left.PARTIDO_ID).localeCompare(String(right.PARTIDO_ID));
     });
   }
 
   function getRotationBefore(studentId, competition) {
     var debt = 0;
-    var historicalIds = {};
+    var details = detailRepository.getAll();
 
     historicalConvocations(competition).forEach(function(convocation) {
-      historicalIds[convocation.CONVOCATORIA_ID] = true;
-    });
-
-    detailRepository.getAll().filter(function(detail) {
-      return historicalIds[detail.CONVOCATORIA_ID] && detail.ALUMNO_ID === studentId && detail.COMPETENCIA_SNAPSHOT === competition;
-    }).forEach(function(detail) {
-      if (detail.ELEGIBILITY_STATUS === 'ELIGIBLE') {
-        debt = detail.SELECCIONADO_FINAL ? 0 : debt + 1;
-      }
+      details.filter(function(detail) {
+        return detail.CONVOCATORIA_ID === convocation.CONVOCATORIA_ID && detail.ALUMNO_ID === studentId && detail.COMPETENCIA_SNAPSHOT === competition;
+      }).forEach(function(detail) {
+        if (detail.ELEGIBILITY_STATUS === 'ELIGIBLE') {
+          debt = detail.SELECCIONADO_FINAL ? 0 : debt + 1;
+        }
+      });
     });
 
     return debt;

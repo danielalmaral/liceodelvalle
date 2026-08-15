@@ -51,7 +51,7 @@ function createMatchService(dependencies) {
     return {
       partidoId: utils.requireText(row.PARTIDO_ID, 'PARTIDO_ID'),
       competencia: utils.assertOneOf(row.COMPETENCIA, MATCH_ENUMS.COMPETENCIA, 'COMPETENCIA'),
-      jornada: utils.requireText(String(row.JORNADA), 'JORNADA'),
+      jornada: utils.requireText(row.JORNADA, 'JORNADA'),
       rival: utils.requireText(row.RIVAL, 'RIVAL'),
       fecha: utils.parseDateValue(row.FECHA, 'FECHA'),
       horaCitacion: row.HORA_CITACION || '',

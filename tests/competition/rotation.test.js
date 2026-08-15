@@ -108,3 +108,83 @@ test('ROTATION_EXCEPTION_REQUIRES_REASON_TEST requires reason for priority omiss
 test('ROTATION_DRAFT_IGNORED_TEST ignores draft convocations', () => {
   assert.equal(service({ convocations: [convocation({ ESTADO: 'BORRADOR' })], details: [detail()] }).getRotationBefore('ALU-001', 'A'), 0);
 });
+
+test('ROTATION_CHRONOLOGICAL_ORDER_TEST uses match chronology instead of repository order', () => {
+  const matches = [
+    match({ PARTIDO_ID: 'PAR-NEW', FECHA: '2026-02-02' }),
+    match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-02-01' })
+  ];
+  const convocations = [
+    convocation({ CONVOCATORIA_ID: 'CON-NEW', PARTIDO_ID: 'PAR-NEW' }),
+    convocation({ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD' })
+  ];
+  const details = [
+    detail({ CONVOCATORIA_ID: 'CON-NEW', SELECCIONADO_FINAL: true }),
+    detail({ CONVOCATORIA_ID: 'CON-OLD', SELECCIONADO_FINAL: false })
+  ];
+  assert.equal(service({ matches, convocations, details }).getRotationBefore('ALU-001', 'A'), 0);
+});
+
+test('ROTATION_REPOSITORY_REORDER_INVARIANT_TEST ignores physical detail order', () => {
+  const matches = [
+    match({ PARTIDO_ID: 'PAR-1', FECHA: '2026-02-01' }),
+    match({ PARTIDO_ID: 'PAR-2', FECHA: '2026-02-02' })
+  ];
+  const convocations = [
+    convocation({ CONVOCATORIA_ID: 'CON-2', PARTIDO_ID: 'PAR-2' }),
+    convocation({ CONVOCATORIA_ID: 'CON-1', PARTIDO_ID: 'PAR-1' })
+  ];
+  const details = [
+    detail({ CONVOCATORIA_ID: 'CON-2', SELECCIONADO_FINAL: false }),
+    detail({ CONVOCATORIA_ID: 'CON-1', SELECCIONADO_FINAL: true })
+  ];
+  assert.equal(service({ matches, convocations, details }).getRotationBefore('ALU-001', 'A'), 1);
+});
+
+test('ROTATION_SELECTED_LATEST_RESETS_TEST latest selected resets debt', () => {
+  const matches = [
+    match({ PARTIDO_ID: 'PAR-1', FECHA: '2026-02-01' }),
+    match({ PARTIDO_ID: 'PAR-2', FECHA: '2026-02-02' })
+  ];
+  const convocations = [
+    convocation({ CONVOCATORIA_ID: 'CON-1', PARTIDO_ID: 'PAR-1' }),
+    convocation({ CONVOCATORIA_ID: 'CON-2', PARTIDO_ID: 'PAR-2' })
+  ];
+  const details = [
+    detail({ CONVOCATORIA_ID: 'CON-1', SELECCIONADO_FINAL: false }),
+    detail({ CONVOCATORIA_ID: 'CON-2', SELECCIONADO_FINAL: true })
+  ];
+  assert.equal(service({ matches, convocations, details }).getRotationBefore('ALU-001', 'A'), 0);
+});
+
+test('ROTATION_UNSELECTED_LATEST_INCREMENT_TEST latest unselected increments debt', () => {
+  const matches = [
+    match({ PARTIDO_ID: 'PAR-1', FECHA: '2026-02-01' }),
+    match({ PARTIDO_ID: 'PAR-2', FECHA: '2026-02-02' })
+  ];
+  const convocations = [
+    convocation({ CONVOCATORIA_ID: 'CON-1', PARTIDO_ID: 'PAR-1' }),
+    convocation({ CONVOCATORIA_ID: 'CON-2', PARTIDO_ID: 'PAR-2' })
+  ];
+  const details = [
+    detail({ CONVOCATORIA_ID: 'CON-1', SELECCIONADO_FINAL: true }),
+    detail({ CONVOCATORIA_ID: 'CON-2', SELECCIONADO_FINAL: false })
+  ];
+  assert.equal(service({ matches, convocations, details }).getRotationBefore('ALU-001', 'A'), 1);
+});
+
+test('ROTATION_SAME_DATE_DETERMINISTIC_TEST uses time and PARTIDO_ID tie-breakers', () => {
+  const matches = [
+    match({ PARTIDO_ID: 'PAR-B', FECHA: '2026-02-01', HORA_PARTIDO: '12:00' }),
+    match({ PARTIDO_ID: 'PAR-A', FECHA: '2026-02-01', HORA_PARTIDO: '10:00' })
+  ];
+  const convocations = [
+    convocation({ CONVOCATORIA_ID: 'CON-B', PARTIDO_ID: 'PAR-B' }),
+    convocation({ CONVOCATORIA_ID: 'CON-A', PARTIDO_ID: 'PAR-A' })
+  ];
+  const details = [
+    detail({ CONVOCATORIA_ID: 'CON-B', SELECCIONADO_FINAL: true }),
+    detail({ CONVOCATORIA_ID: 'CON-A', SELECCIONADO_FINAL: false })
+  ];
+  assert.equal(service({ matches, convocations, details }).getRotationBefore('ALU-001', 'A'), 0);
+});

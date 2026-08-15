@@ -72,16 +72,18 @@ function createAttendanceFoundationService(dependencies) {
           throw utils.createDomainError('SESSION_MATCH_COMPETITION_INVALID', session.sesionId);
         }
 
-        if (matchRepository) {
-          var match = matchById[session.partidoId];
+        if (!matchRepository || typeof matchRepository.getAll !== 'function') {
+          throw utils.createDomainError('REPOSITORY_READ_REQUIRED', 'PARTIDOS');
+        }
 
-          if (!match) {
-            throw utils.createDomainError('SESSION_MATCH_FK', session.partidoId);
-          }
+        var match = matchById[session.partidoId];
 
-          if (match.COMPETENCIA !== session.competencia) {
-            throw utils.createDomainError('SESSION_MATCH_COMPETITION_ALIGNMENT', session.sesionId);
-          }
+        if (!match) {
+          throw utils.createDomainError('SESSION_MATCH_FK', session.partidoId);
+        }
+
+        if (match.COMPETENCIA !== session.competencia) {
+          throw utils.createDomainError('SESSION_MATCH_COMPETITION_ALIGNMENT', session.sesionId);
         }
       }
     });

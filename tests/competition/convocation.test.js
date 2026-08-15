@@ -87,11 +87,40 @@ function attendance(id, overrides = {}) {
   };
 }
 
-function service({ students = baseStudents(), matches = [match()], attendances = [], convocations = [], details = [], configService = config() } = {}) {
-  const convocationRepository = createArrayRepository(convocations);
-  const detailRepository = createArrayRepository(details);
-  const attendanceRepository = createArrayRepository(attendances);
-  const matchService = createMatchService({ matchRepository: createArrayRepository(matches), utils });
+function clone(record) {
+  return { ...record };
+}
+
+function createCopyRepository(rows) {
+  return {
+    rows,
+    getAll() {
+      return rows.map(clone);
+    },
+    insert(record) {
+      rows.push(clone(record));
+      return clone(record);
+    },
+    updateById(idField, id, nextRecord) {
+      const index = rows.findIndex((record) => record[idField] === id);
+      if (index === -1) throw new Error(`REPOSITORY_RECORD_NOT_FOUND: ${id}`);
+      rows[index] = clone(nextRecord);
+      return clone(nextRecord);
+    }
+  };
+}
+
+function repository(rows, copyOnRead) {
+  return copyOnRead ? createCopyRepository(rows) : createArrayRepository(rows);
+}
+
+function service({ students = baseStudents(), matches = [match()], attendances = [], convocations = [], details = [], configService = config(), idGenerator, copyOnRead = false } = {}) {
+  const convocationRepository = repository(convocations, copyOnRead);
+  const detailRepository = repository(details, copyOnRead);
+  const attendanceRepository = repository(attendances, copyOnRead);
+  const matchRepository = repository(matches, copyOnRead);
+  const studentRepository = repository(students, copyOnRead);
+  const matchService = createMatchService({ matchRepository, utils });
   const metricsService = createAttendanceMetricsService({ attendanceRepository, configService, utils });
   const eligibilityService = createEligibilityService({
     attendanceRepository,
@@ -100,7 +129,7 @@ function service({ students = baseStudents(), matches = [match()], attendances =
     detailRepository,
     matchService,
     metricsService,
-    studentRepository: createArrayRepository(students),
+    studentRepository,
     utils
   });
   const rotationService = createRotationService({ configService, convocationRepository, detailRepository, matchService, utils });
@@ -110,14 +139,14 @@ function service({ students = baseStudents(), matches = [match()], attendances =
     convocationRepository,
     detailRepository,
     eligibilityService,
-    idGenerator: { convocationId: () => 'CON-NEW', detailId: (id) => `DET-${id}` },
+    idGenerator: idGenerator || { convocationId: () => 'CON-NEW', detailId: (id) => `DET-${id}` },
     matchService,
     rotationService,
-    studentRepository: createArrayRepository(students),
+    studentRepository,
     utils
   });
 
-  return { convocationRepository, convocationService, detailRepository };
+  return { attendanceRepository, convocationRepository, convocationService, detailRepository, matchRepository, studentRepository };
 }
 
 function generate(options) {
@@ -197,7 +226,8 @@ test('CONVOCATION_FLEX_SPOTS_TEST fills flexible slots beyond minima', () => {
 
 test('CONVOCATION_ROTATION_PRIORITY_TEST selects rotation priority', () => {
   const result = generate({
-    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-001', COMPETENCIA: 'A', ESTADO: 'APROBADA' }],
+    matches: [match(), match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' })],
+    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'A', ESTADO: 'APROBADA' }],
     details: [{ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-DEF', COMPETENCIA_SNAPSHOT: 'A', ELEGIBILITY_STATUS: 'ELIGIBLE', SELECCIONADO_FINAL: false }]
   });
   assert.equal(result.details.find((detail) => detail.ALUMNO_ID === 'ALU-DEF').PRIORIDAD_ROTACION, true);
@@ -206,8 +236,9 @@ test('CONVOCATION_ROTATION_PRIORITY_TEST selects rotation priority', () => {
 test('CONVOCATION_ROTATION_PRECEDES_LEVEL_TEST keeps priority ahead of level', () => {
   const result = generate({
     configService: config({ CONVOCADOS_A: '4', MIN_PORTEROS: '1', MIN_DEFENSAS: '1', MIN_MEDIOS: '1', MIN_DELANTEROS: '1' }),
+    matches: [match(), match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' })],
     students: [...baseStudents({ 'ALU-DEF': { NIVEL: 'B2' } }), student('ALU-HIGH', 'DEF', { NIVEL: 'A1' })],
-    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-001', COMPETENCIA: 'A', ESTADO: 'APROBADA' }],
+    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'A', ESTADO: 'APROBADA' }],
     details: [{ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-DEF', COMPETENCIA_SNAPSHOT: 'A', ELEGIBILITY_STATUS: 'ELIGIBLE', SELECCIONADO_FINAL: false }]
   });
   assert.equal(result.details.find((detail) => detail.ALUMNO_ID === 'ALU-DEF').SELECCIONADO_FINAL, true);
@@ -247,6 +278,7 @@ test('CONVOCATION_A_ATTENDANCE_TIEBREAK_TEST ranks A by attendance after level',
 
 test('CONVOCATION_A_PRIOR_COUNT_TIEBREAK_TEST ranks A by lower prior count after attendance', () => {
   const result = generate({
+    matches: [match(), match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' })],
     students: [
       student('ALU-ONE', 'PO', { NIVEL: 'A1' }),
       student('ALU-ZERO', 'PO', { NIVEL: 'A1' }),
@@ -254,7 +286,7 @@ test('CONVOCATION_A_PRIOR_COUNT_TIEBREAK_TEST ranks A by lower prior count after
       student('ALU-MED', 'MED'),
       student('ALU-DEL', 'DEL')
     ],
-    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-001', COMPETENCIA: 'A', ESTADO: 'APROBADA' }],
+    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'A', ESTADO: 'APROBADA' }],
     details: [{ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-ONE', COMPETENCIA_SNAPSHOT: 'A', ELEGIBILITY_STATUS: 'ELIGIBLE', SELECCIONADO_FINAL: true }]
   });
   assert.equal(result.details.find((detail) => detail.ALUMNO_ID === 'ALU-ZERO').SELECCIONADO_FINAL, true);
@@ -263,7 +295,7 @@ test('CONVOCATION_A_PRIOR_COUNT_TIEBREAK_TEST ranks A by lower prior count after
 
 test('CONVOCATION_B_PRIOR_COUNT_PRIORITY_TEST ranks B by lower prior count', () => {
   const result = generate({
-    matches: [match({ COMPETENCIA: 'B' })],
+    matches: [match({ COMPETENCIA: 'B' }), match({ PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'B', FECHA: '2026-01-01' })],
     students: [
       student('ALU-ONE', 'PO', { COMPETENCIA_BASE: 'B' }),
       student('ALU-ZERO', 'PO', { COMPETENCIA_BASE: 'B' }),
@@ -271,7 +303,7 @@ test('CONVOCATION_B_PRIOR_COUNT_PRIORITY_TEST ranks B by lower prior count', () 
       student('ALU-MED', 'MED', { COMPETENCIA_BASE: 'B' }),
       student('ALU-DEL', 'DEL', { COMPETENCIA_BASE: 'B' })
     ],
-    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-001', COMPETENCIA: 'B', ESTADO: 'APROBADA' }],
+    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'B', ESTADO: 'APROBADA' }],
     details: [{ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-ONE', COMPETENCIA_SNAPSHOT: 'B', ELEGIBILITY_STATUS: 'ELIGIBLE', SELECCIONADO_FINAL: true }]
   });
   assert.equal(result.details.find((detail) => detail.ALUMNO_ID === 'ALU-ZERO').SELECCIONADO_FINAL, true);
@@ -322,7 +354,7 @@ test('CONVOCATION_PENDING_EXCLUDED_TEST excludes pending students', () => {
 });
 
 test('CONVOCATION_INSUFFICIENT_ELIGIBLE_TEST flags insufficient pool', () => {
-  assert.equal(generate({ students: [student('ALU-PO', 'PO')] }).convocation.OBSERVACIONES, 'INSUFFICIENT_ELIGIBLE_PLAYERS');
+  assert.match(generate({ students: [student('ALU-PO', 'PO')] }).convocation.OBSERVACIONES, /INSUFFICIENT_ELIGIBLE_PLAYERS/);
 });
 
 test('CONVOCATION_ROTATION_POSITION_CONFLICT_TEST flags unmet position minimum', () => {
@@ -332,20 +364,18 @@ test('CONVOCATION_ROTATION_POSITION_CONFLICT_TEST flags unmet position minimum',
 
 test('CONVOCATION_MANUAL_CHANGE_REASON_TEST blocks manual change without reason', () => {
   const state = service();
-  const result = state.convocationService.generateConvocation('PAR-001', 'coach');
-  result.details[0].CAMBIO_MANUAL = true;
-  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_MANUAL_REASON_REQUIRED/);
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  assert.throws(() => state.convocationService.setFinalSelection('CON-NEW', 'ALU-PO', false, ''), /CONVOCATION_MANUAL_REASON_REQUIRED/);
 });
 
 test('CONVOCATION_PRIORITY_EXCEPTION_REASON_TEST blocks priority omission without reason', () => {
   const state = service({
-    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-001', COMPETENCIA: 'A', ESTADO: 'APROBADA' }],
+    matches: [match(), match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' })],
+    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'A', ESTADO: 'APROBADA' }],
     details: [{ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-DEF', COMPETENCIA_SNAPSHOT: 'A', ELEGIBILITY_STATUS: 'ELIGIBLE', SELECCIONADO_FINAL: false }]
   });
-  const result = state.convocationService.generateConvocation('PAR-001', 'coach');
-  const priority = result.details.find((detail) => detail.ALUMNO_ID === 'ALU-DEF');
-  priority.SELECCIONADO_FINAL = false;
-  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /ROTATION_EXCEPTION_REASON_REQUIRED|CONVOCATION_APPROVAL_EXACT_TOTAL/);
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  assert.throws(() => state.convocationService.setFinalSelection('CON-NEW', 'ALU-DEF', false, ''), /ROTATION_EXCEPTION_REASON_REQUIRED|CONVOCATION_MANUAL_REASON_REQUIRED/);
 });
 
 test('CONVOCATION_APPROVAL_HUMAN_REQUIRED_TEST requires actor', () => {
@@ -356,15 +386,15 @@ test('CONVOCATION_APPROVAL_HUMAN_REQUIRED_TEST requires actor', () => {
 
 test('CONVOCATION_APPROVAL_EXACT_TOTAL_TEST requires exact total', () => {
   const state = service();
-  const result = state.convocationService.generateConvocation('PAR-001', 'coach');
-  result.details[0].SELECCIONADO_FINAL = false;
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.convocationService.setFinalSelection('CON-NEW', 'ALU-PO', false, 'Decision ficticia');
   assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_APPROVAL_EXACT_TOTAL/);
 });
 
 test('CONVOCATION_APPROVAL_POSITION_TEST requires minima', () => {
-  const state = service();
-  const result = state.convocationService.generateConvocation('PAR-001', 'coach');
-  result.details.find((detail) => detail.POSICION_ASIGNADA === 'PO').POSICION_ASIGNADA = 'DEF';
+  const state = service({ students: baseStudents({ 'ALU-PO': { POSICION_SECUNDARIA: 'DEF' } }) });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.convocationService.assignPlayerPosition('CON-NEW', 'ALU-PO', 'DEF', 'Decision ficticia');
   assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_APPROVAL_POSITION/);
 });
 
@@ -394,8 +424,8 @@ test('CONVOCATION_APPROVAL_CANCELLED_MATCH_TEST blocks cancelled match approval'
 
 test('CONVOCATION_APPROVAL_NO_PARTIAL_WRITE_TEST does not approve on failed validation', () => {
   const state = service();
-  const result = state.convocationService.generateConvocation('PAR-001', 'coach');
-  result.details[0].SELECCIONADO_FINAL = false;
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.convocationService.setFinalSelection('CON-NEW', 'ALU-PO', false, 'Decision ficticia');
   assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_APPROVAL_EXACT_TOTAL/);
   assert.equal(state.convocationRepository.getAll()[0].ESTADO, 'PROPUESTA');
 });
@@ -423,21 +453,314 @@ test('ROTATION_UPDATED_ONLY_ON_APPROVAL_TEST approval persists rotation after va
 
 test('ROTATION_EXCEPTION_PERSISTS_DEBT_TEST omitted priority keeps debt increment', () => {
   const state = service({
+    matches: [match(), match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' })],
     students: [...baseStudents(), student('ALU-DEF-ALT', 'DEF')],
-    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-001', COMPETENCIA: 'A', ESTADO: 'APROBADA' }],
+    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'A', ESTADO: 'APROBADA' }],
     details: [{ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-DEF', COMPETENCIA_SNAPSHOT: 'A', ELEGIBILITY_STATUS: 'ELIGIBLE', SELECCIONADO_FINAL: false }]
   });
-  const result = state.convocationService.generateConvocation('PAR-001', 'coach');
-  const priority = result.details.find((detail) => detail.ALUMNO_ID === 'ALU-DEF');
-  priority.SELECCIONADO_FINAL = false;
-  priority.POSICION_ASIGNADA = '';
-  const alternate = result.details.find((detail) => detail.ALUMNO_ID === 'ALU-DEF-ALT');
-  alternate.SELECCIONADO_FINAL = true;
-  alternate.POSICION_ASIGNADA = 'DEF';
-  priority.ROTATION_EXCEPTION = true;
-  priority.MOTIVO_CAMBIO = 'Decision ficticia';
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.convocationService.setFinalSelection('CON-NEW', 'ALU-DEF', false, 'Decision ficticia');
+  state.convocationService.setFinalSelection('CON-NEW', 'ALU-DEF-ALT', true, 'Decision ficticia');
+  state.convocationService.assignPlayerPosition('CON-NEW', 'ALU-DEF-ALT', 'DEF', 'Decision ficticia');
   state.convocationService.approveConvocation('CON-NEW', 'coach');
   assert.equal(state.detailRepository.getAll().find((detail) => detail.ALUMNO_ID === 'ALU-DEF' && detail.CONVOCATORIA_ID === 'CON-NEW').ROTACION_DESPUES, 2);
+});
+
+test('CONVOCATION_APPROVAL_STATE_TRANSITION_TEST rejects non proposal approval', () => {
+  const state = service({ convocations: [{ ...generate().convocation, ESTADO: 'BORRADOR' }] });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_INVALID_STATE_TRANSITION/);
+});
+
+test('CONVOCATION_DOUBLE_APPROVAL_REJECTED_TEST rejects repeated approval', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.convocationService.approveConvocation('CON-NEW', 'coach');
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_INVALID_STATE_TRANSITION/);
+});
+
+test('CONVOCATION_STALE_INJURY_TEST rejects changed injury status', () => {
+  const students = baseStudents();
+  const state = service({ students });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  students.find((row) => row.ALUMNO_ID === 'ALU-DEF').ESTADO_DEPORTIVO = 'LESIONADO';
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_STALE_PROPOSAL/);
+});
+
+test('CONVOCATION_STALE_SUSPENSION_TEST rejects changed suspension status', () => {
+  const students = baseStudents();
+  const state = service({ students });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  students.find((row) => row.ALUMNO_ID === 'ALU-DEF').ESTADO_DEPORTIVO = 'SUSPENDIDO';
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_STALE_PROPOSAL/);
+});
+
+test('CONVOCATION_STALE_PENDING_ABSENCE_TEST rejects new pending absence', () => {
+  const attendances = [];
+  const state = service({ attendances });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  attendances.push({ ASISTENCIA_ID: 'AST-F', ALUMNO_ID: 'ALU-DEF', ESTADO: 'F', VALOR_APLICADO: null, VALOR_MAXIMO_APLICADO: null });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_STALE_PROPOSAL/);
+});
+
+test('CONVOCATION_STALE_FI_TEST rejects new FI', () => {
+  const attendances = [];
+  const state = service({ attendances });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  attendances.push({ ASISTENCIA_ID: 'AST-FI', ALUMNO_ID: 'ALU-DEF', ESTADO: 'FI', VALOR_APLICADO: 0, VALOR_MAXIMO_APLICADO: 1, REGISTRADO_EN: '2026-01-01T10:00:00Z' });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_STALE_PROPOSAL/);
+});
+
+test('CONVOCATION_STALE_FI_CONSUMPTION_TEST rejects consumed FI before approval', () => {
+  const attendances = [{ ASISTENCIA_ID: 'AST-FI', ALUMNO_ID: 'ALU-DEF', ESTADO: 'FI', VALOR_APLICADO: 0, VALOR_MAXIMO_APLICADO: 1, REGISTRADO_EN: '2026-01-01T10:00:00Z' }];
+  const matches = [match(), match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' })];
+  const convocations = [];
+  const details = [];
+  const state = service({ attendances, matches, convocations, details });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  convocations.push({ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'A', ESTADO: 'APROBADA' });
+  details.push({ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-DEF', ELEGIBILITY_STATUS: 'INELIGIBLE', MOTIVO_NO_ELEGIBLE: 'FI_BLOCK', FI_ORIGEN_ID: 'AST-FI', COMPETENCIA_SNAPSHOT: 'A', SELECCIONADO_FINAL: false });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_STALE_PROPOSAL/);
+});
+
+test('CONVOCATION_STALE_ROTATION_TEST rejects changed rotation debt', () => {
+  const matches = [match(), match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' })];
+  const convocations = [];
+  const details = [];
+  const state = service({ matches, convocations, details });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  convocations.push({ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'A', ESTADO: 'APROBADA' });
+  details.push({ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-DEF', ELEGIBILITY_STATUS: 'ELIGIBLE', COMPETENCIA_SNAPSHOT: 'A', SELECCIONADO_FINAL: false });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_STALE_PROPOSAL/);
+});
+
+test('CONVOCATION_STALE_NO_PARTIAL_WRITE_TEST preserves proposal on stale failure', () => {
+  const students = baseStudents();
+  const state = service({ students });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  students[0].ACTIVO = false;
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_STALE_PROPOSAL/);
+  assert.equal(state.convocationRepository.getAll()[0].ESTADO, 'PROPUESTA');
+});
+
+test('FI_CANNOT_BE_CONSUMED_TWICE_TEST rejects prior FI consumption', () => {
+  const attendances = [{ ASISTENCIA_ID: 'AST-FI', ALUMNO_ID: 'ALU-DEF', ESTADO: 'FI', VALOR_APLICADO: 0, VALOR_MAXIMO_APLICADO: 1, REGISTRADO_EN: '2026-01-01T10:00:00Z' }];
+  const matches = [match(), match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' })];
+  const state = service({
+    attendances,
+    matches,
+    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'A', ESTADO: 'APROBADA' }],
+    details: [{ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-DEF', ELEGIBILITY_STATUS: 'INELIGIBLE', MOTIVO_NO_ELEGIBLE: 'FI_BLOCK', FI_ORIGEN_ID: 'AST-FI', COMPETENCIA_SNAPSHOT: 'A', SELECCIONADO_FINAL: false }]
+  });
+  const result = state.convocationService.generateConvocation('PAR-001', 'coach');
+  assert.equal(result.details.find((detail) => detail.ALUMNO_ID === 'ALU-DEF').FI_ORIGEN_ID, '');
+});
+
+test('FI_TWO_STALE_PROPOSALS_TEST keeps duplicate proposals stale-safe', () => {
+  const attendances = [{ ASISTENCIA_ID: 'AST-FI', ALUMNO_ID: 'ALU-DEF', ESTADO: 'FI', VALOR_APLICADO: 0, VALOR_MAXIMO_APLICADO: 1, REGISTRADO_EN: '2026-01-01T10:00:00Z' }];
+  const matches = [match(), match({ PARTIDO_ID: 'PAR-002', FECHA: '2026-02-02' })];
+  const convocations = [];
+  const details = [];
+  const state = service({ attendances, matches, convocations, details, students: [...baseStudents(), student('ALU-FLEX', 'DEF')], idGenerator: { convocationId: () => `CON-${convocations.length + 1}`, detailId: (id) => `DET-${convocations.length + 1}-${id}` } });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.convocationService.generateConvocation('PAR-002', 'coach');
+  assert.equal(details.filter((detail) => detail.FI_ORIGEN_ID === 'AST-FI').length, 2);
+});
+
+test('FI_SECOND_APPROVAL_REJECTED_TEST rejects second stale FI approval', () => {
+  const attendances = [{ ASISTENCIA_ID: 'AST-FI', ALUMNO_ID: 'ALU-DEF', ESTADO: 'FI', VALOR_APLICADO: 0, VALOR_MAXIMO_APLICADO: 1, REGISTRADO_EN: '2026-01-01T10:00:00Z' }];
+  const matches = [match(), match({ PARTIDO_ID: 'PAR-002', FECHA: '2026-02-02' })];
+  const convocations = [];
+  const details = [];
+  const state = service({ attendances, matches, convocations, details, students: [...baseStudents(), student('ALU-FLEX', 'DEF')], idGenerator: { convocationId: () => `CON-${convocations.length + 1}`, detailId: (id) => `DET-${convocations.length + 1}-${id}` } });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.convocationService.generateConvocation('PAR-002', 'coach');
+  state.convocationService.approveConvocation('CON-1', 'coach');
+  assert.throws(() => state.convocationService.approveConvocation('CON-2', 'coach'), /CONVOCATION_STALE_PROPOSAL/);
+});
+
+test('CONVOCATION_SINGLE_APPROVED_PER_MATCH_TEST rejects second approved same match', () => {
+  const state = service({
+    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-001', COMPETENCIA: 'A', ESTADO: 'APROBADA' }]
+  });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_MATCH_ALREADY_APPROVED/);
+});
+
+test('CONVOCATION_MULTIPLE_PROPOSALS_ALLOWED_TEST allows multiple proposals for same match', () => {
+  const convocations = [];
+  const state = service({ convocations, idGenerator: { convocationId: () => `CON-${convocations.length + 1}`, detailId: (id) => `DET-${convocations.length + 1}-${id}` } });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  assert.equal(convocations.length, 2);
+});
+
+test('CONVOCATION_MANUAL_SELECT_PERSISTENCE_TEST persists explicit selection', () => {
+  const state = service({ configService: config({ CONVOCADOS_A: '5' }), students: [...baseStudents(), student('ALU-FLEX', 'DEF')] });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.convocationService.setFinalSelection('CON-NEW', 'ALU-FLEX', false, 'Decision ficticia');
+  state.convocationService.setFinalSelection('CON-NEW', 'ALU-FLEX', true, '');
+  assert.equal(state.detailRepository.getAll().find((detail) => detail.ALUMNO_ID === 'ALU-FLEX').SELECCIONADO_FINAL, true);
+});
+
+test('CONVOCATION_MANUAL_DESELECT_PERSISTENCE_TEST persists explicit removal', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.convocationService.setFinalSelection('CON-NEW', 'ALU-PO', false, 'Decision ficticia');
+  assert.equal(state.detailRepository.getAll().find((detail) => detail.ALUMNO_ID === 'ALU-PO').SELECCIONADO_FINAL, false);
+});
+
+test('CONVOCATION_MANUAL_POSITION_PERSISTENCE_TEST persists explicit position assignment', () => {
+  const state = service({ students: baseStudents({ 'ALU-PO': { POSICION_SECUNDARIA: 'DEF' } }) });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.convocationService.assignPlayerPosition('CON-NEW', 'ALU-PO', 'DEF', 'Decision ficticia');
+  assert.equal(state.detailRepository.getAll().find((detail) => detail.ALUMNO_ID === 'ALU-PO').POSICION_ASIGNADA, 'DEF');
+});
+
+test('CONVOCATION_MANUAL_CHANGE_COPY_ON_READ_TEST does not rely on returned object mutation', () => {
+  const state = service({ copyOnRead: true });
+  const result = state.convocationService.generateConvocation('PAR-001', 'coach');
+  result.details[0].SELECCIONADO_FINAL = false;
+  assert.equal(state.detailRepository.getAll().find((detail) => detail.ALUMNO_ID === result.details[0].ALUMNO_ID).SELECCIONADO_FINAL, true);
+});
+
+test('CONVOCATION_MANUAL_CHANGE_REASON_REQUIRED_TEST requires reason for manual selection delta', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  assert.throws(() => state.convocationService.setFinalSelection('CON-NEW', 'ALU-PO', false, ''), /CONVOCATION_MANUAL_REASON_REQUIRED/);
+});
+
+test('CONVOCATION_MANUAL_INELIGIBLE_REJECTED_TEST rejects ineligible manual selection', () => {
+  const state = service({ students: baseStudents({ 'ALU-DEF': { ACTIVO: false } }) });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  assert.throws(() => state.convocationService.setFinalSelection('CON-NEW', 'ALU-DEF', true, 'Decision ficticia'), /CONVOCATION_MANUAL_INELIGIBLE/);
+});
+
+test('CONVOCATION_MANUAL_PENDING_REJECTED_TEST rejects pending manual selection', () => {
+  const state = service({ attendances: [{ ASISTENCIA_ID: 'AST-F', ALUMNO_ID: 'ALU-DEF', ESTADO: 'F', VALOR_APLICADO: null, VALOR_MAXIMO_APLICADO: null }] });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  assert.throws(() => state.convocationService.setFinalSelection('CON-NEW', 'ALU-DEF', true, 'Decision ficticia'), /CONVOCATION_MANUAL_PENDING/);
+});
+
+test('CONVOCATION_MANUAL_PRIORITY_EXCEPTION_TEST marks priority exception', () => {
+  const state = service({
+    matches: [match(), match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' })],
+    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'A', ESTADO: 'APROBADA' }],
+    details: [{ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-DEF', COMPETENCIA_SNAPSHOT: 'A', ELEGIBILITY_STATUS: 'ELIGIBLE', SELECCIONADO_FINAL: false }]
+  });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.convocationService.setFinalSelection('CON-NEW', 'ALU-DEF', false, 'Decision ficticia');
+  assert.equal(state.detailRepository.getAll().find((detail) => detail.CONVOCATORIA_ID === 'CON-NEW' && detail.ALUMNO_ID === 'ALU-DEF').ROTATION_EXCEPTION, true);
+});
+
+test('CONVOCATION_MANUAL_ONLY_PROPOSAL_TEST rejects edits outside proposal', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.convocationService.approveConvocation('CON-NEW', 'coach');
+  assert.throws(() => state.convocationService.setFinalSelection('CON-NEW', 'ALU-PO', false, 'Decision ficticia'), /CONVOCATION_INVALID_STATE_TRANSITION/);
+});
+
+test('CONVOCATION_DETAIL_ID_UNIQUENESS_TEST rejects duplicate detail ids', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.detailRepository.insert({ ...state.detailRepository.getAll()[0], ALUMNO_ID: 'ALU-X' });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_DETAIL_DUPLICATE_ID/);
+});
+
+test('CONVOCATION_DETAIL_STUDENT_UNIQUENESS_TEST rejects duplicate students', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.detailRepository.insert({ ...state.detailRepository.getAll()[0], DETALLE_ID: 'DET-X' });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_DETAIL_DUPLICATE_STUDENT/);
+});
+
+test('CONVOCATION_DETAIL_FOREIGN_KEY_TEST rejects wrong detail convocation id', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  const detail = state.detailRepository.getAll()[0];
+  state.detailRepository.updateById('DETALLE_ID', detail.DETALLE_ID, { ...detail, CONVOCATORIA_ID: 'CON-X' });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_APPROVAL_EXACT_TOTAL/);
+});
+
+test('CONVOCATION_DETAIL_COMPETITION_TEST rejects wrong competition snapshot', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  const detail = state.detailRepository.getAll()[0];
+  state.detailRepository.updateById('DETALLE_ID', detail.DETALLE_ID, { ...detail, COMPETENCIA_SNAPSHOT: 'B' });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_DETAIL_COMPETITION/);
+});
+
+test('CONVOCATION_ASSIGNED_POSITION_ENUM_TEST rejects invalid selected position enum', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  const detail = state.detailRepository.getAll()[0];
+  state.detailRepository.updateById('DETALLE_ID', detail.DETALLE_ID, { ...detail, POSICION_ASIGNADA: 'GK' });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_ASSIGNED_POSITION_ENUM/);
+});
+
+test('CONVOCATION_ASSIGNED_POSITION_ALLOWED_TEST rejects position outside player positions', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  const detail = state.detailRepository.getAll()[0];
+  state.detailRepository.updateById('DETALLE_ID', detail.DETALLE_ID, { ...detail, POSICION_ASIGNADA: 'DEF' });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_ASSIGNED_POSITION_INVALID/);
+});
+
+test('CONVOCATION_DUPLICATE_PLAYER_APPROVAL_TEST rejects one player counted twice', () => {
+  const state = service();
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  state.detailRepository.insert({ ...state.detailRepository.getAll()[0], DETALLE_ID: 'DET-X' });
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /CONVOCATION_DETAIL_DUPLICATE_STUDENT/);
+});
+
+test('CONVOCATION_GENERATED_IDS_UNIQUE_TEST rejects duplicate generated detail ids', () => {
+  assert.throws(() => generate({ idGenerator: { convocationId: () => 'CON-X', detailId: () => 'DET-DUP' } }), /CONVOCATION_DETAIL_DUPLICATE_ID/);
+});
+
+test('CONVOCATION_PRIORITY_OVERFLOW_ALERT_TEST surfaces priority overflow', () => {
+  const oldMatches = [match(), match({ PARTIDO_ID: 'PAR-OLD-1', FECHA: '2026-01-01' })];
+  const oldConvocations = [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD-1', COMPETENCIA: 'A', ESTADO: 'APROBADA' }];
+  const players = [...baseStudents(), student('ALU-FLEX', 'DEF')];
+  const oldDetails = players.map((row) => ({ DETALLE_ID: `OLD-${row.ALUMNO_ID}`, CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: row.ALUMNO_ID, COMPETENCIA_SNAPSHOT: 'A', ELEGIBILITY_STATUS: 'ELIGIBLE', SELECCIONADO_FINAL: false }));
+  const result = generate({ matches: oldMatches, convocations: oldConvocations, details: oldDetails, students: players });
+  assert.match(result.convocation.OBSERVACIONES, /ROTATION_POSITION_CONFLICT/);
+});
+
+test('CONVOCATION_MULTIPLE_ALERTS_TEST keeps multiple alert codes', () => {
+  const result = generate({ students: [student('ALU-1', 'PO')] });
+  assert.match(result.convocation.OBSERVACIONES, /INSUFFICIENT_ELIGIBLE_PLAYERS\|ROTATION_POSITION_CONFLICT/);
+});
+
+test('CONVOCATION_PRIORITY_OVERFLOW_APPROVAL_REASON_TEST requires reasons for omitted priorities', () => {
+  const players = [...baseStudents(), student('ALU-FLEX', 'DEF')];
+  const state = service({
+    matches: [match(), match({ PARTIDO_ID: 'PAR-OLD', FECHA: '2026-01-01' })],
+    students: players,
+    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'A', ESTADO: 'APROBADA' }],
+    details: players.map((row) => ({ DETALLE_ID: `OLD-${row.ALUMNO_ID}`, CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: row.ALUMNO_ID, COMPETENCIA_SNAPSHOT: 'A', ELEGIBILITY_STATUS: 'ELIGIBLE', SELECCIONADO_FINAL: false }))
+  });
+  state.convocationService.generateConvocation('PAR-001', 'coach');
+  assert.throws(() => state.convocationService.approveConvocation('CON-NEW', 'coach'), /ROTATION_EXCEPTION_REASON_REQUIRED|CONVOCATION_APPROVAL_EXACT_TOTAL/);
+});
+
+test('CONVOCATION_PRIORITY_ORDER_A_TEST stores A ranking order', () => {
+  const result = generate({ students: [student('ALU-A2', 'PO', { NIVEL: 'A2' }), student('ALU-A1', 'PO', { NIVEL: 'A1' }), student('ALU-DEF', 'DEF'), student('ALU-MED', 'MED'), student('ALU-DEL', 'DEL')] });
+  assert.equal(result.details.find((detail) => detail.ALUMNO_ID === 'ALU-A1').ORDEN_PRIORIDAD, 1);
+});
+
+test('CONVOCATION_PRIORITY_ORDER_B_TEST stores B ranking order', () => {
+  const result = generate({
+    matches: [match({ COMPETENCIA: 'B' }), match({ PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'B', FECHA: '2026-01-01' })],
+    students: [student('ALU-ONE', 'PO', { COMPETENCIA_BASE: 'B' }), student('ALU-ZERO', 'PO', { COMPETENCIA_BASE: 'B' }), student('ALU-DEF', 'DEF', { COMPETENCIA_BASE: 'B' }), student('ALU-MED', 'MED', { COMPETENCIA_BASE: 'B' }), student('ALU-DEL', 'DEL', { COMPETENCIA_BASE: 'B' })],
+    convocations: [{ CONVOCATORIA_ID: 'CON-OLD', PARTIDO_ID: 'PAR-OLD', COMPETENCIA: 'B', ESTADO: 'APROBADA' }],
+    details: [{ DETALLE_ID: 'DET-OLD', CONVOCATORIA_ID: 'CON-OLD', ALUMNO_ID: 'ALU-ONE', COMPETENCIA_SNAPSHOT: 'B', ELEGIBILITY_STATUS: 'ELIGIBLE', SELECCIONADO_FINAL: true }]
+  });
+  assert.ok(result.details.find((detail) => detail.ALUMNO_ID === 'ALU-ZERO').ORDEN_PRIORIDAD < result.details.find((detail) => detail.ALUMNO_ID === 'ALU-ONE').ORDEN_PRIORIDAD);
+});
+
+test('CONVOCATION_PRIORITY_ORDER_REPOSITORY_INVARIANT_TEST ranking ignores repository order', () => {
+  const result = generate({ students: [student('ALU-DEL', 'DEL'), student('ALU-MED', 'MED'), student('ALU-DEF', 'DEF'), student('ALU-PO', 'PO')] });
+  const order = result.details.filter((detail) => detail.ELEGIBILITY_STATUS === 'ELIGIBLE').map((detail) => `${detail.ORDEN_PRIORIDAD}:${detail.ALUMNO_ID}`).sort();
+  assert.deepEqual(order, ['1:ALU-DEF', '2:ALU-DEL', '3:ALU-MED', '4:ALU-PO']);
 });
 
 test('CONVOCATION_SETUP_IDEMPOTENCY_TEST creates competition sheets idempotently', () => {

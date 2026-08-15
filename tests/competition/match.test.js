@@ -123,6 +123,10 @@ test('MATCH_DURATION_TEST requires positive integer duration', () => {
   assert.throws(() => matchService([match({ DURACION_MINUTOS: '0' })]).getMatches(), /MATCH_DURATION_INVALID/);
 });
 
+test('MATCH_JORNADA_REQUIRED_TEST rejects undefined jornada', () => {
+  assert.throws(() => matchService([match({ JORNADA: undefined })]).getMatches(), /REQUIRED_FIELD: JORNADA/);
+});
+
 test('MATCH_SETUP_IDEMPOTENCY_TEST creates and preserves PARTIDOS headers', () => {
   const spreadsheet = fakeSpreadsheet();
   assert.equal(setupCompetitionSheets(spreadsheet, setupSheetWithHeaders), true);
@@ -135,12 +139,38 @@ test('SESSION_MATCH_FK_TEST rejects missing match reference', () => {
   assert.throws(() => sessionService([session()], []).getSessions(), /SESSION_MATCH_FK/);
 });
 
+test('SESSION_MATCH_REPOSITORY_REQUIRED_TEST requires PARTIDOS authority for match sessions', () => {
+  const service = createAttendanceFoundationService({
+    attendanceRepository: createArrayRepository([]),
+    configService: {},
+    sessionRepository: createArrayRepository([session()]),
+    studentRepository: createArrayRepository([]),
+    utils
+  });
+  assert.throws(() => service.getSessions(), /REPOSITORY_READ_REQUIRED: PARTIDOS/);
+});
+
+test('SESSION_MATCH_FK_FAIL_CLOSED_TEST rejects match session without matching partido', () => {
+  assert.throws(() => sessionService([session({ PARTIDO_ID: 'PAR-MISSING' })], [match()]).getSessions(), /SESSION_MATCH_FK/);
+});
+
 test('SESSION_MATCH_REQUIRED_TEST requires match id for match sessions', () => {
   assert.throws(() => sessionService([session({ PARTIDO_ID: '' })]).getSessions(), /SESSION_MATCH_REQUIRED/);
 });
 
 test('SESSION_TRAINING_MATCH_EMPTY_TEST requires empty match id for training', () => {
   assert.throws(() => sessionService([session({ TIPO: 'ENTRENAMIENTO', PARTIDO_ID: 'PAR-001', COMPETENCIA: 'GENERAL' })]).getSessions(), /SESSION_TRAINING_MATCH_NOT_EMPTY/);
+});
+
+test('SESSION_TRAINING_WITHOUT_MATCH_REPOSITORY_TEST validates training without PARTIDOS authority', () => {
+  const service = createAttendanceFoundationService({
+    attendanceRepository: createArrayRepository([]),
+    configService: {},
+    sessionRepository: createArrayRepository([session({ TIPO: 'ENTRENAMIENTO', PARTIDO_ID: '', COMPETENCIA: 'GENERAL' })]),
+    studentRepository: createArrayRepository([]),
+    utils
+  });
+  assert.equal(service.getSessions()[0].tipo, 'ENTRENAMIENTO');
 });
 
 test('SESSION_MATCH_COMPETITION_ALIGNMENT_TEST validates competition alignment', () => {
