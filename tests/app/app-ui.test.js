@@ -5,10 +5,14 @@ const path = require('node:path');
 
 const { createAppClientController } = require('../../src/AppClientController');
 const { createAppRenderer } = require('../../src/AppRenderer');
-const { getLdvAppCss, getLdvAppHtml, doGet } = require('../../src/AppUi');
+const { doGet, include } = require('../../src/AppUi');
 const handlers = require('../../src/PanelHandlers');
 
 const root = path.resolve(__dirname, '..', '..');
+
+function srcFile(name) {
+  return fs.readFileSync(path.join(root, 'src', name), 'utf8');
+}
 
 function student(overrides = {}) {
   return {
@@ -114,9 +118,14 @@ function convocationView(overrides = {}) {
 
 test('APP_DOGET_FULL_PAGE_TEST', () => {
   global.HtmlService = {
-    createHtmlOutput(html) {
+    createTemplateFromFile(filename) {
       return {
-        html,
+        filename,
+        evaluated: false,
+        evaluate() {
+          this.evaluated = true;
+          return this;
+        },
         setTitle(title) {
           this.title = title;
           return this;
@@ -127,8 +136,8 @@ test('APP_DOGET_FULL_PAGE_TEST', () => {
   try {
     const output = doGet();
     assert.equal(output.title, 'Liceo del Valle - Futbol');
-    assert.equal(output.html.includes('<!doctype html>'), true);
-    assert.equal(output.html.includes('ldv-app-shell'), true);
+    assert.equal(output.filename, 'Index');
+    assert.equal(output.evaluated, true);
   } finally {
     delete global.HtmlService;
   }
@@ -141,7 +150,7 @@ test('APP_NO_SIDEBAR_DEPENDENCY_TEST', () => {
 });
 
 test('APP_SHELL_NAV_TEST', () => {
-  const html = getLdvAppHtml();
+  const html = createAppRenderer({ state: { activeRoute: 'dashboard' } }).renderNavigation();
   ['dashboard', 'students', 'attendance', 'convocations', 'matches', 'postmatch', 'reports', 'communications', 'config'].forEach((route) => {
     assert.equal(html.includes(route), true);
   });
@@ -155,19 +164,134 @@ test('APP_ACTIVE_ROUTE_TEST', () => {
 });
 
 test('APP_RESPONSIVE_CSS_TEST', () => {
-  const css = getLdvAppCss();
+  const css = srcFile('AppStyles.html');
   assert.equal(css.includes('@media (max-width:980px)'), true);
   assert.equal(css.includes('@media (max-width:720px)'), true);
   assert.equal(css.includes('overflow-x:auto'), true);
 });
 
 test('APP_NO_EXTERNAL_FRONTEND_DEPENDENCY_TEST', () => {
-  const html = getLdvAppHtml();
+  const html = srcFile('Index.html') + srcFile('AppStyles.html') + srcFile('AppClient.html');
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.equal(html.includes('https://'), false);
   assert.equal(html.includes('cdn'), false);
   assert.equal(packageJson.dependencies, undefined);
   assert.equal(packageJson.devDependencies, undefined);
+});
+
+test('APP_PHYSICAL_INDEX_HTML_TEST', () => {
+  assert.equal(fs.existsSync(path.join(root, 'src', 'Index.html')), true);
+});
+
+test('APP_PHYSICAL_STYLES_HTML_TEST', () => {
+  const styles = srcFile('AppStyles.html');
+  assert.equal(fs.existsSync(path.join(root, 'src', 'AppStyles.html')), true);
+  assert.equal(styles.includes('<style>'), true);
+  assert.equal(styles.includes('</style>'), true);
+});
+
+test('APP_PHYSICAL_CLIENT_HTML_TEST', () => {
+  const client = srcFile('AppClient.html');
+  assert.equal(fs.existsSync(path.join(root, 'src', 'AppClient.html')), true);
+  assert.equal(client.includes('<script>'), true);
+  assert.equal(client.includes('</script>'), true);
+});
+
+test('APP_INDEX_TEMPLATE_INCLUDES_TEST', () => {
+  const index = srcFile('Index.html');
+  assert.equal(index.includes("include('AppStyles')"), true);
+  assert.equal(index.includes("include('AppClient')"), true);
+  assert.equal(index.includes('getAppClientControllerSource()'), true);
+  assert.equal(index.includes('getAppRendererSource()'), true);
+});
+
+test('APP_DOGET_TEMPLATE_FROM_INDEX_TEST', () => {
+  const calls = [];
+  global.HtmlService = {
+    createTemplateFromFile(filename) {
+      calls.push(['createTemplateFromFile', filename]);
+      return {
+        evaluate() {
+          calls.push(['evaluate']);
+          return {
+            setTitle(title) {
+              calls.push(['setTitle', title]);
+              return { title };
+            }
+          };
+        }
+      };
+    }
+  };
+  try {
+    doGet();
+    assert.deepEqual(calls, [
+      ['createTemplateFromFile', 'Index'],
+      ['evaluate'],
+      ['setTitle', 'Liceo del Valle - Futbol']
+    ]);
+  } finally {
+    delete global.HtmlService;
+  }
+});
+
+test('APP_INCLUDE_HTML_FILE_TEST', () => {
+  const calls = [];
+  global.HtmlService = {
+    createHtmlOutputFromFile(filename) {
+      calls.push(filename);
+      return {
+        getContent() {
+          calls.push('getContent');
+          return '<style>ok</style>';
+        }
+      };
+    }
+  };
+  try {
+    assert.equal(include('AppStyles'), '<style>ok</style>');
+    assert.deepEqual(calls, ['AppStyles', 'getContent']);
+  } finally {
+    delete global.HtmlService;
+  }
+});
+
+test('APP_NO_MONOLITHIC_DOCUMENT_STRING_TEST', () => {
+  const source = srcFile('AppUi.js');
+  assert.equal(source.includes('<!doctype html>'), false);
+  assert.equal(source.includes('createHtmlOutput(getLdvAppHtml())'), false);
+  assert.equal(source.includes('createTemplateFromFile'), true);
+});
+
+test('APP_NO_DUPLICATE_CSS_SOURCE_TEST', () => {
+  const source = srcFile('AppUi.js');
+  const styles = srcFile('AppStyles.html');
+  assert.equal(styles.includes('.ldv-app-shell'), true);
+  assert.equal(source.includes('.ldv-app-shell'), false);
+  assert.equal(source.includes('getLdvAppCss'), false);
+});
+
+test('APP_NO_DUPLICATE_BROWSER_BOOTSTRAP_TEST', () => {
+  const source = srcFile('AppUi.js');
+  const client = srcFile('AppClient.html');
+  assert.equal(client.includes('var appState='), true);
+  assert.equal(source.includes('var appState='), false);
+  assert.equal(source.includes('getLdvAppHtml'), false);
+});
+
+test('APP_INDEX_NO_EXTERNAL_DEPENDENCY_TEST', () => {
+  const html = srcFile('Index.html') + srcFile('AppStyles.html') + srcFile('AppClient.html');
+  ['http://', 'https://', 'cdn', 'fonts.google', '<script src=', '<link href='].forEach((term) => {
+    assert.equal(html.includes(term), false);
+  });
+});
+
+test('APP_WEBAPP_MANIFEST_PRIVATE_P15_TEST', () => {
+  const manifest = JSON.parse(srcFile('appsscript.json'));
+  assert.equal(manifest.timeZone, 'America/Mexico_City');
+  assert.equal(manifest.runtimeVersion, 'V8');
+  assert.equal(manifest.exceptionLogging, 'STACKDRIVER');
+  assert.deepEqual(manifest.webapp, { access: 'MYSELF', executeAs: 'USER_DEPLOYING' });
 });
 
 test('APP_STALE_ROUTE_RESPONSE_TEST', () => {
