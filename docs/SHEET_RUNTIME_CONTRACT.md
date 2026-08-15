@@ -22,7 +22,9 @@ Runtime:
 - IDs y entorno futuro viven en Script Properties, no hardcoded.
 - El lock es obligatorio. Los comandos de escritura expuestos por runtime se ejecutan bajo `runExclusive`.
 - `runtime.commands` es la autoridad para writes criticos: ausencias, asistencias, generacion de convocatoria, seleccion final, generacion/envio de comunicaciones, participacion y bitacora.
-- `runtime.services` y `runtime.queries` exponen sólo fachadas de lectura; los servicios mutables internos no se devuelven.
+- `runtime.services` y `runtime.queries` exponen sólo fachadas de lectura; los servicios mutables internos y repositories internos no se devuelven.
+- Ninguna fachada publica fuera de `commands` expone `insert`, `updateById`, `append` u objetos repository.
+- `queries.getRotationBefore(studentId, competition)` conserva la firma del servicio de rotacion.
 - Handlers disponibles: `expirePendingAbsences` y `sendPendingCommunications`.
 - Los handlers usan exclusivamente commands. Si falta el command requerido, fallan con `TRIGGER_COMMAND_REQUIRED`.
 - No se instalan triggers ni se ejecutan adapters reales en tests.

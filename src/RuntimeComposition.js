@@ -202,7 +202,7 @@ function createAppsScriptRuntime(options) {
     createAttendance: function(input) { return withLock(function() { return attendanceFoundationService.createAttendance(input); }); },
     createParticipation: lockedCommand('createParticipation'),
     generateAbsenceCommunications: function(attendanceId) { return withLock(function() { return operationalCommandService.generateAbsenceCommunications(attendanceId); }); },
-    generateConvocation: function(matchId) { return withLock(function() { return operationalCommandService.generateConvocation(matchId); }); },
+    generateConvocation: function(matchId, actor) { return withLock(function() { return operationalCommandService.generateConvocation(matchId, actor); }); },
     generateConvocationCommunications: function(convocationId) { return withLock(function() { return operationalCommandService.generateConvocationCommunications(convocationId); }); },
     resolveAbsence: lockedCommand('resolveAbsence'),
     resolveExpiredAbsences: lockedCommand('resolveExpiredAbsences'),
@@ -218,7 +218,7 @@ function createAppsScriptRuntime(options) {
     getEvents: function() { return auditService.getEvents(); },
     getMatches: function() { return matchService.getMatches(); },
     getParticipations: function() { return participationService.getParticipations(); },
-    getRotationBefore: function(matchId) { return rotationService.getRotationBefore(matchId); },
+    getRotationBefore: function(studentId, competition) { return rotationService.getRotationBefore(studentId, competition); },
     getSessions: function() { return attendanceFoundationService.getSessions(); },
     getStudentMetrics: function(studentId) { return attendanceMetricsService.getStudentMetrics(studentId); },
     getStudents: function() { return masterDataService.getStudents(); },
@@ -229,7 +229,6 @@ function createAppsScriptRuntime(options) {
   return {
     commands: commands,
     queries: queries,
-    repositories: repositories,
     runtime: { spreadsheetId: spreadsheetId, withLock: withLock },
     services: queries,
     triggerHandlers: triggerFactory({ commands: commands })

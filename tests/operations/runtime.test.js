@@ -385,6 +385,48 @@ test('RUNTIME_MUTATION_BYPASS_BLOCKED_TEST does not expose mutable services', ()
   ].forEach((name) => assert.equal(runtime.services[name], undefined));
 });
 
+test('RUNTIME_REPOSITORY_MUTATION_BYPASS_BLOCKED_TEST does not expose repositories or repository mutations', () => {
+  const runtime = createAppsScriptRuntime(runtimeOptions());
+  assert.equal(runtime.repositories, undefined);
+
+  [runtime.queries, runtime.services, runtime.runtime].forEach((facade) => {
+    assert.equal(facade.insert, undefined);
+    assert.equal(facade.updateById, undefined);
+    assert.equal(facade.append, undefined);
+    Object.keys(facade).forEach((name) => {
+      if (typeof facade[name] === 'object' && facade[name] !== null) {
+        assert.equal(facade[name].insert, undefined);
+        assert.equal(facade[name].updateById, undefined);
+      }
+    });
+  });
+});
+
+test('RUNTIME_COMMAND_ONLY_MUTATION_SURFACE_TEST exposes mutations only on commands', () => {
+  const runtime = createAppsScriptRuntime(runtimeOptions());
+  [
+    'createAttendance',
+    'resolveAbsence',
+    'resolveExpiredAbsences',
+    'generateConvocation',
+    'setFinalSelection',
+    'assignPlayerPosition',
+    'approveConvocation',
+    'createParticipation',
+    'updateParticipation',
+    'generateAbsenceCommunications',
+    'generateConvocationCommunications',
+    'sendPendingCommunications',
+    'retryCommunication',
+    'appendAudit'
+  ].forEach((name) => {
+    assert.equal(typeof runtime.commands[name], 'function');
+    assert.equal(runtime.queries[name], undefined);
+    assert.equal(runtime.services[name], undefined);
+    assert.equal(runtime.runtime[name], undefined);
+  });
+});
+
 test('RUNTIME_READ_ONLY_QUERY_FACADE_TEST exposes read-only facades', () => {
   const runtime = createAppsScriptRuntime(runtimeOptions());
   assert.equal(typeof runtime.services.getStudents, 'function');
@@ -403,6 +445,20 @@ test('RUNTIME_GENERATE_CONVOCATION_LOCK_TEST locks generation command', () => {
   });
   createAppsScriptRuntime(options).commands.generateConvocation('PAR-001');
   assert.equal(observedInside, true);
+});
+
+test('RUNTIME_GENERATE_CONVOCATION_ACTOR_PASSTHROUGH_TEST preserves actor argument', () => {
+  let observedActor = '';
+  const options = runtimeOptions();
+  options.constructors.createConvocationService = () => ({
+    generateConvocation(matchId, actor) {
+      observedActor = actor;
+      return { CONVOCATORIA_ID: 'CON-001', PARTIDO_ID: matchId, GENERADA_POR: actor };
+    }
+  });
+  const result = createAppsScriptRuntime(options).commands.generateConvocation('PAR-001', 'coach');
+  assert.equal(observedActor, 'coach');
+  assert.equal(result.GENERADA_POR, 'coach');
 });
 
 test('RUNTIME_GENERATE_ABSENCE_COMMUNICATION_LOCK_TEST locks absence communication generation', () => {
@@ -451,6 +507,25 @@ test('RUNTIME_AUDIT_LOCK_TEST locks audit append command', () => {
   };
   createAppsScriptRuntime(options).commands.appendAudit({ EVENTO_ID: 'AUD-LOCK', ENTIDAD: 'X', ENTIDAD_ID: '1', ACCION: 'A' });
   assert.equal(observedInside, true);
+});
+
+test('RUNTIME_ROTATION_QUERY_SIGNATURE_TEST forwards student and competition', () => {
+  const options = runtimeOptions();
+  options.repositories.convocationRepository = createArrayRepository([
+    { CONVOCATORIA_ID: 'CON-001', PARTIDO_ID: 'PAR-001', COMPETENCIA: 'A', ESTADO: 'APROBADA' }
+  ]);
+  options.repositories.detailRepository = createArrayRepository([
+    {
+      DETALLE_ID: 'DET-001',
+      CONVOCATORIA_ID: 'CON-001',
+      ALUMNO_ID: 'ALU-001',
+      COMPETENCIA_SNAPSHOT: 'A',
+      ELEGIBILITY_STATUS: 'ELIGIBLE',
+      SELECCIONADO_FINAL: false
+    }
+  ]);
+  const runtime = createAppsScriptRuntime(options);
+  assert.equal(runtime.queries.getRotationBefore('ALU-001', 'A'), 1);
 });
 
 test('RUNTIME_MISSING_LOCK_FAIL_CLOSED_TEST requires runtime lock', () => {
