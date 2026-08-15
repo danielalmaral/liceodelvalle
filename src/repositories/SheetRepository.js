@@ -25,6 +25,13 @@ function createSheetRepository(context) {
         throw new Error('SHEET_REPOSITORY_HEADER_MISMATCH: ' + header);
       }
     });
+
+    if (typeof sheet.getLastColumn === 'function' && sheet.getLastColumn() > headers.length) {
+      var extra = sheet.getRange(1, headers.length + 1, 1, sheet.getLastColumn() - headers.length).getValues()[0];
+      if (extra.some(function(value) { return String(value || '').trim() !== ''; })) {
+        throw new Error('SHEET_REPOSITORY_HEADER_MISMATCH: EXTRA_COLUMN');
+      }
+    }
   }
 
   function rowToRecord(values) {
@@ -60,6 +67,11 @@ function createSheetRepository(context) {
 
   function updateById(idField, id, nextRecord) {
     assertHeaders();
+
+    if (nextRecord[idField] !== id) {
+      throw new Error('SHEET_REPOSITORY_IDENTITY_MUTATION: ' + id);
+    }
+
     var all = getAll();
     var matches = [];
 
@@ -82,9 +94,15 @@ function createSheetRepository(context) {
   }
 
   function findById(idField, id) {
-    return getAll().filter(function(record) {
+    var matches = getAll().filter(function(record) {
       return record[idField] === id;
-    })[0] || null;
+    });
+
+    if (matches.length > 1) {
+      throw new Error('SHEET_REPOSITORY_DUPLICATE_ID: ' + id);
+    }
+
+    return matches[0] || null;
   }
 
   return {

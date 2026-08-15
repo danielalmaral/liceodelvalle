@@ -9,6 +9,14 @@ Incluye:
 - P12: bitacora append-only.
 - P13: SheetRepository, setup global, composition root y trigger handlers.
 
+Correctivo aplicado:
+
+- Comandos operativos auditados con `operationId` estable por reintento y eventos distintos por operacion.
+- Runtime Apps Script con grafo completo, lock obligatorio y comandos como autoridad de writes criticos.
+- Comunicaciones con adapter lazy, autorizacion por `CONFIG` antes de enviar y proteccion contra reenvio por fallo de puntero resumen.
+- Participacion con consistencia estricta entre asistencia, presencia y estadisticas de ausentes.
+- `SheetRepository` falla cerrado ante mutacion de ID, duplicados en `findById` y headers extra.
+
 No ejecuta recursos reales:
 
 - Sin Spreadsheet productivo.

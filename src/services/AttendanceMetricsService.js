@@ -2,9 +2,15 @@ function createAttendanceMetricsService(dependencies) {
   var utils = dependencies.utils;
   var attendanceRepository = dependencies.attendanceRepository;
   var configService = dependencies.configService;
+  var validateConfigPolicy = dependencies.validateAttendanceConfigPolicy || (typeof globalThis !== 'undefined' ? globalThis.validateAttendanceConfigPolicy : null);
+  var validateSnapshot = dependencies.validateAttendanceSnapshot || (typeof globalThis !== 'undefined' ? globalThis.validateAttendanceSnapshot : null);
 
   function validateAttendanceConfigRelations() {
-    return validateAttendanceConfigPolicy(configService, utils);
+    if (typeof validateConfigPolicy !== 'function') {
+      throw utils.createDomainError('ATTENDANCE_CONFIG_POLICY_REQUIRED', 'validateAttendanceConfigPolicy');
+    }
+
+    return validateConfigPolicy(configService, utils);
   }
 
   function getStudentMetrics(studentId) {
@@ -13,7 +19,11 @@ function createAttendanceMetricsService(dependencies) {
     });
 
     rows.forEach(function(row) {
-      validateAttendanceSnapshot(row, utils);
+      if (typeof validateSnapshot !== 'function') {
+        throw utils.createDomainError('ATTENDANCE_SNAPSHOT_VALIDATOR_REQUIRED', 'validateAttendanceSnapshot');
+      }
+
+      validateSnapshot(row, utils);
     });
 
     if (rows.length === 0) {

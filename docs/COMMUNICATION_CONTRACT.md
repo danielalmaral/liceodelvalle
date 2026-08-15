@@ -15,5 +15,11 @@ Reglas:
 - Convocatorias sólo se generan para `APROBADA` y alumnos seleccionados.
 - No hay confirmación de padres ni links de confirmación.
 - El dominio usa adapter `send(message)`; no llama MailApp/GmailApp directamente.
+- El adapter de Apps Script resuelve `MailApp`/`GmailApp` de forma lazy; construir runtime no envía ni consulta proveedor real.
+- Antes de enviar, `CONFIG` vuelve a autorizar el tipo: `AVISO_AUSENCIA_EMAIL` para ausencias y `CONVOCATORIA_EMAIL` para convocatorias.
+- Si la config deshabilita el tipo, el mensaje permanece `PENDIENTE` y no se invoca el adapter.
 - Errores de envío se sanitizan antes de persistir.
 - `ASISTENCIAS.COMUNICACION_ID` es puntero resumen legacy; la relación canónica es `COMUNICACIONES.REFERENCIA_ID`.
+- Si el correo se entrega y falla la actualización del puntero resumen, la comunicación queda `ENVIADO` con warning `COMMUNICATION_SUMMARY_POINTER_FAILED`; no se convierte en `ERROR` para evitar reenvío duplicado.
+
+No se garantiza exactly-once delivery por infraestructura externa. La protección local evita duplicar mensajes por reintentos de fallos posteriores a una entrega marcada como enviada.

@@ -67,3 +67,7 @@ La bitácora registra eventos autoritativos sin exponer correos, teléfonos, cue
 ## ADR-017: Runtime Con Adapters Y Lock Inyectado
 
 El runtime de Apps Script se compone desde adapters explícitos, Script Properties y locks inyectados. Tests usan fakes y no ejecutan servicios externos reales.
+
+## ADR-018: Comandos Operativos Como Autoridad De Escritura
+
+Los writes criticos P10-P13 deben pasar por comandos runtime lockeados. Cuando un write requiere bitacora, el comando escribe dominio, agrega evento append-only con `operationId` y reporta reconciliacion si el append falla despues del write.

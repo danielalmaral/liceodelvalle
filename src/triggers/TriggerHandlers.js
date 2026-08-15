@@ -1,5 +1,6 @@
 function createTriggerHandlers(dependencies) {
   var services = dependencies.services || {};
+  var commands = dependencies.commands || {};
   var lock = dependencies.lock || { runExclusive: function(callback) { return callback(); } };
 
   function withLock(callback) {
@@ -25,6 +26,11 @@ function createTriggerHandlers(dependencies) {
   }
 
   function expirePendingAbsences(now) {
+    if (commands.resolveExpiredAbsences) {
+      var commandResults = commands.resolveExpiredAbsences(now) || [];
+      return summarize(commandResults.map(function() { return { ok: true }; }));
+    }
+
     return withLock(function() {
       var results = services.absenceResolutionService.resolveExpiredAbsences(now) || [];
       return summarize(results.map(function() { return { ok: true }; }));
@@ -32,6 +38,10 @@ function createTriggerHandlers(dependencies) {
   }
 
   function sendPendingCommunications() {
+    if (commands.sendPendingCommunications) {
+      return summarize(commands.sendPendingCommunications() || []);
+    }
+
     return withLock(function() {
       return summarize(services.communicationService.sendPendingCommunications() || []);
     });

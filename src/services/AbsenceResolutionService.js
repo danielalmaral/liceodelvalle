@@ -3,6 +3,8 @@ function createAbsenceResolutionService(dependencies) {
   var attendanceRepository = dependencies.attendanceRepository;
   var tutorRepository = dependencies.tutorRepository;
   var configService = dependencies.configService;
+  var validateConfigPolicy = dependencies.validateAttendanceConfigPolicy || (typeof globalThis !== 'undefined' ? globalThis.validateAttendanceConfigPolicy : null);
+  var validateSnapshot = dependencies.validateAttendanceSnapshot || (typeof globalThis !== 'undefined' ? globalThis.validateAttendanceSnapshot : null);
   var clock = dependencies.clock || { now: function() { return new Date(); } };
 
   function snapshotFor(status) {
@@ -43,7 +45,11 @@ function createAbsenceResolutionService(dependencies) {
       throw utils.createDomainError('ABSENCE_INVALID_TRANSITION', finalStatus);
     }
 
-    validateAttendanceConfigPolicy(configService, utils);
+    if (typeof validateConfigPolicy !== 'function') {
+      throw utils.createDomainError('ATTENDANCE_CONFIG_POLICY_REQUIRED', 'validateAttendanceConfigPolicy');
+    }
+
+    validateConfigPolicy(configService, utils);
 
     if ((finalStatus === 'FJ' || finalStatus === 'LES') && record.LIMITE_JUSTIFICACION && now.getTime() > new Date(record.LIMITE_JUSTIFICACION).getTime()) {
       finalStatus = 'FI';
@@ -63,7 +69,11 @@ function createAbsenceResolutionService(dependencies) {
     nextRecord.MODIFICADO_EN = now;
     nextRecord.JUSTIFICACION = reason;
 
-    validateAttendanceSnapshot(nextRecord, utils);
+    if (typeof validateSnapshot !== 'function') {
+      throw utils.createDomainError('ATTENDANCE_SNAPSHOT_VALIDATOR_REQUIRED', 'validateAttendanceSnapshot');
+    }
+
+    validateSnapshot(nextRecord, utils);
     attendanceRepository.updateById('ASISTENCIA_ID', attendanceId, nextRecord);
 
     return {

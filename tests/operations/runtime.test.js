@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const utils = require('../../src/common/DomainUtils');
 require('../../src/config/ConfigSetup');
 require('../../src/domain/MasterDataContracts');
 require('../../src/domain/AttendanceContracts');
@@ -8,16 +9,35 @@ require('../../src/domain/ConvocationContracts');
 require('../../src/domain/ParticipationContracts');
 require('../../src/domain/CommunicationContracts');
 require('../../src/domain/AuditContracts');
+const { validateAttendanceConfigPolicy } = require('../../src/domain/AttendanceConfigPolicy');
+const { validateAttendanceSnapshot } = require('../../src/domain/AttendanceSnapshotValidator');
+const { createArrayRepository } = require('../../src/repositories/ArrayRepository');
+const { createConfigRepository } = require('../../src/repositories/ConfigRepository');
 const { setupSheetWithHeaders } = require('../../src/common/SheetSetup');
 const { setupOperationalSheets } = require('../../src/config/GlobalSetup');
 const { createSheetRepository } = require('../../src/repositories/SheetRepository');
 const { createTriggerHandlers } = require('../../src/triggers/TriggerHandlers');
 const { createAppsScriptRuntime } = require('../../src/RuntimeComposition');
+const { createConfigService } = require('../../src/config/ConfigService');
+const { createMasterDataService } = require('../../src/services/MasterDataService');
+const { createAttendanceFoundationService } = require('../../src/services/AttendanceFoundationService');
+const { createAbsenceResolutionService } = require('../../src/services/AbsenceResolutionService');
+const { createAttendanceMetricsService } = require('../../src/services/AttendanceMetricsService');
+const { createMatchService } = require('../../src/services/MatchService');
+const { createEligibilityService } = require('../../src/services/EligibilityService');
+const { createRotationService } = require('../../src/services/RotationService');
+const { createConvocationService } = require('../../src/services/ConvocationService');
+const { createParticipationService } = require('../../src/services/ParticipationService');
+const { createCommunicationService } = require('../../src/services/CommunicationService');
+const { createAuditService } = require('../../src/services/AuditService');
+const { createOperationalCommandService } = require('../../src/services/OperationalCommandService');
+const { completeConfigRows } = require('../config/config-fixtures');
 
 function fakeSheet(rows = []) {
   return {
     rows,
     getLastRow() { return rows.length; },
+    getLastColumn() { return rows[0] ? rows[0].length : 0; },
     getRange(row, column, rowCount, columnCount) {
       return {
         getValues() {
@@ -42,6 +62,123 @@ function fakeSpreadsheet() {
 
 function repository(rows = [['ID', 'VALUE'], ['A', 'one']]) {
   return createSheetRepository({ sheet: fakeSheet(rows), headers: ['ID', 'VALUE'] });
+}
+
+function student() {
+  return {
+    ALUMNO_ID: 'ALU-001',
+    ACTIVO: true,
+    NOMBRE: 'Alumno',
+    APELLIDOS: 'Ficticio',
+    GRADO: '7',
+    GRUPO: 'A',
+    COMPETENCIA_BASE: 'A',
+    NIVEL: 'A1',
+    POSICION_PRINCIPAL: 'DEF',
+    POSICION_SECUNDARIA: '',
+    FECHA_ALTA: '2026-01-01',
+    FECHA_BAJA: '',
+    ESTADO_DEPORTIVO: 'ACTIVO',
+    OBSERVACIONES: ''
+  };
+}
+
+function tutor() {
+  return {
+    TUTOR_ID: 'TUT-001',
+    ALUMNO_ID: 'ALU-001',
+    NOMBRE_TUTOR: 'Tutor',
+    PARENTESCO: 'Padre',
+    EMAIL: 'family@example.invalid',
+    TELEFONO: '',
+    PRINCIPAL: true,
+    RECIBE_AUSENCIAS: true,
+    RECIBE_CONVOCATORIAS: true,
+    ACTIVO: true
+  };
+}
+
+function match() {
+  return {
+    PARTIDO_ID: 'PAR-001',
+    COMPETENCIA: 'A',
+    JORNADA: 'J1',
+    RIVAL: 'Rival Ficticio',
+    FECHA: '2026-02-01',
+    HORA_CITACION: '09:00',
+    HORA_PARTIDO: '10:00',
+    SEDE: 'Cancha Ficticia',
+    LOCAL_VISITANTE: 'LOCAL',
+    DURACION_MINUTOS: '60',
+    UNIFORME: '',
+    INDICACIONES: '',
+    ESTADO: 'PROGRAMADO',
+    GOLES_FAVOR: '',
+    GOLES_CONTRA: '',
+    OBSERVACIONES: ''
+  };
+}
+
+function session() {
+  return {
+    SESION_ID: 'SES-001',
+    TIPO: 'PARTIDO',
+    FECHA: '2026-02-01',
+    HORA_INICIO: '10:00',
+    HORA_FIN: '11:00',
+    COMPETENCIA: 'A',
+    PARTIDO_ID: 'PAR-001',
+    DESCRIPCION: '',
+    ESTADO: 'ABIERTA',
+    CREADA_EN: '',
+    CERRADA_EN: ''
+  };
+}
+
+function runtimeOptions(overrides = {}) {
+  return {
+    constructors: {
+      createAbsenceResolutionService,
+      createAttendanceFoundationService,
+      createAttendanceMetricsService,
+      createAuditService,
+      createCommunicationService,
+      createConfigService,
+      createConvocationService,
+      createEligibilityService,
+      createMasterDataService,
+      createMatchService,
+      createOperationalCommandService,
+      createParticipationService,
+      createRotationService,
+      validateAttendanceConfigPolicy,
+      validateAttendanceSnapshot
+    },
+    createTriggerHandlers,
+    environment: { spreadsheetId: 'test-spreadsheet' },
+    idGenerator: {
+      attendanceId: () => 'AST-NEW',
+      operationId: (prefix) => `${prefix}-001`,
+      participationId: () => 'PRT-001'
+    },
+    lock: { runExclusive(callback) { return callback(); } },
+    mailAdapter: { send() {} },
+    repositories: {
+      auditRepository: createArrayRepository([]),
+      attendanceRepository: createArrayRepository([]),
+      communicationRepository: createArrayRepository([]),
+      configRepository: createConfigRepository(completeConfigRows()),
+      convocationRepository: createArrayRepository([]),
+      detailRepository: createArrayRepository([]),
+      matchRepository: createArrayRepository([match()]),
+      participationRepository: createArrayRepository([]),
+      sessionRepository: createArrayRepository([session()]),
+      studentRepository: createArrayRepository([student()]),
+      tutorRepository: createArrayRepository([tutor()])
+    },
+    utils,
+    ...overrides
+  };
 }
 
 test('SHEET_REPOSITORY_READ_TEST maps rows to records', () => {
@@ -85,36 +222,152 @@ test('SHEET_REPOSITORY_NO_ROW_IDENTITY_TEST updates after physical reorder by id
   assert.equal(repo.findById('ID', 'A').VALUE, 'changed');
 });
 
+test('SHEET_REPOSITORY_IDENTITY_MUTATION_TEST rejects id mutation on update', () => {
+  assert.throws(() => repository().updateById('ID', 'A', { ID: 'B', VALUE: 'changed' }), /SHEET_REPOSITORY_IDENTITY_MUTATION/);
+});
+
+test('SHEET_REPOSITORY_FIND_DUPLICATE_TEST fails closed on duplicate find', () => {
+  assert.throws(() => repository([['ID', 'VALUE'], ['A', 'one'], ['A', 'two']]).findById('ID', 'A'), /SHEET_REPOSITORY_DUPLICATE_ID/);
+});
+
+test('SHEET_REPOSITORY_EXTRA_HEADER_TEST rejects extra non-empty header', () => {
+  assert.throws(() => repository([['ID', 'VALUE', 'EXTRA'], ['A', 'one', 'x']]).getAll(), /SHEET_REPOSITORY_HEADER_MISMATCH/);
+});
+
 test('RUNTIME_COMPOSITION_TEST builds runtime with fake repositories', () => {
-  const runtime = createAppsScriptRuntime({
-    createTriggerHandlers,
-    environment: { getSpreadsheetId: () => 'test-spreadsheet' },
-    sheets: { CONFIG: ['ID'] },
-    createRepository: (name) => ({ name }),
-    factories: { sample: ({ runtime: current }) => ({ id: current.spreadsheetId }) }
-  });
-  assert.equal(runtime.services.sample.id, 'test-spreadsheet');
+  const runtime = createAppsScriptRuntime(runtimeOptions({ environment: { getSpreadsheetId: () => 'test-spreadsheet' } }));
+  assert.equal(runtime.runtime.spreadsheetId, 'test-spreadsheet');
+  assert.equal(typeof runtime.services.configService.getInteger, 'function');
+  assert.equal(typeof runtime.commands.createAttendance, 'function');
+});
+
+test('RUNTIME_FULL_GRAPH_COMPOSITION_TEST builds all P1-P13 services and commands', () => {
+  const runtime = createAppsScriptRuntime(runtimeOptions());
+  [
+    'configService',
+    'masterDataService',
+    'attendanceFoundationService',
+    'absenceResolutionService',
+    'attendanceMetricsService',
+    'matchService',
+    'eligibilityService',
+    'rotationService',
+    'convocationService',
+    'participationService',
+    'communicationService',
+    'auditService'
+  ].forEach((name) => assert.equal(typeof runtime.services[name], 'object'));
+  assert.equal(typeof runtime.commands.approveConvocation, 'function');
+});
+
+test('RUNTIME_MISSING_REQUIRED_REPOSITORY_TEST fails closed on missing repository', () => {
+  const options = runtimeOptions();
+  delete options.repositories.auditRepository;
+  assert.throws(() => createAppsScriptRuntime(options), /RUNTIME_REPOSITORY_REQUIRED: auditRepository/);
+});
+
+test('RUNTIME_MISSING_CONFIG_DEPENDENCY_TEST fails closed on missing constructor', () => {
+  const options = runtimeOptions();
+  delete options.constructors.createConfigService;
+  assert.throws(() => createAppsScriptRuntime(options), /RUNTIME_CONFIG_DEPENDENCY_REQUIRED: createConfigService/);
 });
 
 test('RUNTIME_MISSING_SPREADSHEET_ID_TEST fails closed', () => {
-  assert.throws(() => createAppsScriptRuntime({ environment: {}, createTriggerHandlers }), /RUNTIME_SPREADSHEET_ID_REQUIRED/);
+  assert.throws(() => createAppsScriptRuntime(runtimeOptions({ environment: {} })), /RUNTIME_SPREADSHEET_ID_REQUIRED/);
 });
 
 test('RUNTIME_LOCK_INJECTION_TEST executes through injected lock', () => {
   let locked = false;
-  const runtime = createAppsScriptRuntime({
-    createTriggerHandlers,
-    environment: { spreadsheetId: 'test-spreadsheet' },
+  const runtime = createAppsScriptRuntime(runtimeOptions({
     lock: { runExclusive(callback) { locked = true; return callback(); } }
-  });
+  }));
   runtime.runtime.withLock(() => true);
   assert.equal(locked, true);
 });
 
+test('RUNTIME_CRITICAL_WRITE_LOCK_TEST runs command writes inside lock callback', () => {
+  let insideLock = false;
+  let observedInside = false;
+  const options = runtimeOptions({
+    lock: { runExclusive(callback) { insideLock = true; try { return callback(); } finally { insideLock = false; } } }
+  });
+  options.repositories.auditRepository = createArrayRepository([]);
+  const runtime = createAppsScriptRuntime(options);
+  runtime.services.auditService.appendEvent = () => { observedInside = insideLock; return {}; };
+  runtime.services.absenceResolutionService.resolveAbsence = () => ({ attendance: { ASISTENCIA_ID: 'AST-001', ESTADO: 'FJ' } });
+  runtime.commands.resolveAbsence('AST-001', 'FJ');
+  assert.equal(observedInside, true);
+});
+
+test('RUNTIME_APPROVAL_LOCK_TEST locks convocation approval command', () => {
+  let insideLock = false;
+  let observedInside = false;
+  const runtime = createAppsScriptRuntime(runtimeOptions({
+    lock: { runExclusive(callback) { insideLock = true; try { return callback(); } finally { insideLock = false; } } }
+  }));
+  runtime.services.convocationService.approveConvocation = () => { observedInside = insideLock; return { ESTADO: 'APROBADA' }; };
+  runtime.commands.approveConvocation('CON-001', 'coach');
+  assert.equal(observedInside, true);
+});
+
+test('RUNTIME_ATTENDANCE_LOCK_TEST locks create attendance command', () => {
+  let insideLock = false;
+  let observedInside = false;
+  const options = runtimeOptions({
+    lock: { runExclusive(callback) { insideLock = true; try { return callback(); } finally { insideLock = false; } } }
+  });
+  options.repositories.attendanceRepository = {
+    getAll() { return []; },
+    insert(record) { observedInside = insideLock; return record; }
+  };
+  createAppsScriptRuntime(options).commands.createAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'A' });
+  assert.equal(observedInside, true);
+});
+
+test('RUNTIME_PARTICIPATION_LOCK_TEST locks participation command', () => {
+  let insideLock = false;
+  let observedInside = false;
+  const runtime = createAppsScriptRuntime(runtimeOptions({
+    lock: { runExclusive(callback) { insideLock = true; try { return callback(); } finally { insideLock = false; } } }
+  }));
+  runtime.services.participationService.updateParticipation = () => { observedInside = insideLock; return { PARTICIPACION_ID: 'PRT-001', MINUTOS_JUGADOS: 1 }; };
+  runtime.commands.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 1 });
+  assert.equal(observedInside, true);
+});
+
+test('RUNTIME_COMMUNICATION_LOCK_TEST locks communication command', () => {
+  let insideLock = false;
+  let observedInside = false;
+  const runtime = createAppsScriptRuntime(runtimeOptions({
+    lock: { runExclusive(callback) { insideLock = true; try { return callback(); } finally { insideLock = false; } } }
+  }));
+  runtime.services.communicationService.sendPendingCommunications = () => { observedInside = insideLock; return []; };
+  runtime.commands.sendPendingCommunications();
+  assert.equal(observedInside, true);
+});
+
+test('RUNTIME_AUDIT_LOCK_TEST locks audit append command', () => {
+  let insideLock = false;
+  let observedInside = false;
+  const options = runtimeOptions({
+    lock: { runExclusive(callback) { insideLock = true; try { return callback(); } finally { insideLock = false; } } }
+  });
+  options.repositories.auditRepository = {
+    getAll() { return []; },
+    insert(record) { observedInside = insideLock; return record; }
+  };
+  createAppsScriptRuntime(options).commands.appendAudit({ EVENTO_ID: 'AUD-LOCK', ENTIDAD: 'X', ENTIDAD_ID: '1', ACCION: 'A' });
+  assert.equal(observedInside, true);
+});
+
+test('RUNTIME_MISSING_LOCK_FAIL_CLOSED_TEST requires runtime lock', () => {
+  assert.throws(() => createAppsScriptRuntime(runtimeOptions({ lock: null })), /RUNTIME_LOCK_REQUIRED/);
+});
+
 test('RUNTIME_NO_REAL_EXTERNAL_CALL_TEST does not call real adapters during construction', () => {
   let calls = 0;
-  createAppsScriptRuntime({ createTriggerHandlers, environment: { spreadsheetId: 'test-spreadsheet' }, factories: { noop: () => { calls += 1; return {}; } } });
-  assert.equal(calls, 1);
+  createAppsScriptRuntime(runtimeOptions({ mailAdapter: { send() { calls += 1; } } }));
+  assert.equal(calls, 0);
 });
 
 test('TRIGGER_EXPIRED_ABSENCE_IDEMPOTENCY_TEST summarizes expired absence handler', () => {
@@ -155,6 +408,6 @@ test('GLOBAL_SETUP_HEADER_FAILURE_TEST rejects incompatible headers', () => {
 });
 
 test('GAS_RUNTIME_COMPATIBILITY_TEST builds runtime with fakes only', () => {
-  const runtime = createAppsScriptRuntime({ createTriggerHandlers, environment: { spreadsheetId: 'test-spreadsheet' } });
+  const runtime = createAppsScriptRuntime(runtimeOptions());
   assert.equal(runtime.runtime.spreadsheetId, 'test-spreadsheet');
 });

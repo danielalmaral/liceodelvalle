@@ -5,6 +5,8 @@ function createAttendanceFoundationService(dependencies) {
   var studentRepository = dependencies.studentRepository;
   var matchRepository = dependencies.matchRepository;
   var configService = dependencies.configService;
+  var validateConfigPolicy = dependencies.validateAttendanceConfigPolicy || (typeof globalThis !== 'undefined' ? globalThis.validateAttendanceConfigPolicy : null);
+  var validateSnapshot = dependencies.validateAttendanceSnapshot || (typeof globalThis !== 'undefined' ? globalThis.validateAttendanceSnapshot : null);
   var idGenerator = dependencies.idGenerator || {};
   var clock = dependencies.clock || { now: function() { return new Date(); } };
 
@@ -189,7 +191,11 @@ function createAttendanceFoundationService(dependencies) {
       }
     });
 
-    validateAttendanceConfigPolicy(configService, utils);
+    if (typeof validateConfigPolicy !== 'function') {
+      throw utils.createDomainError('ATTENDANCE_CONFIG_POLICY_REQUIRED', 'validateAttendanceConfigPolicy');
+    }
+
+    validateConfigPolicy(configService, utils);
 
     if (estado === 'A') {
       value = configService.getDecimal('ASISTENCIA_VALOR');
@@ -217,7 +223,11 @@ function createAttendanceFoundationService(dependencies) {
       OBSERVACIONES: ''
     };
 
-    validateAttendanceSnapshot(record, utils);
+    if (typeof validateSnapshot !== 'function') {
+      throw utils.createDomainError('ATTENDANCE_SNAPSHOT_VALIDATOR_REQUIRED', 'validateAttendanceSnapshot');
+    }
+
+    validateSnapshot(record, utils);
 
     return attendanceRepository.insert(record);
   }

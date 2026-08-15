@@ -11,7 +11,10 @@ Reglas principales:
 - La convocatoria debe estar `APROBADA`, `ENVIADA` o `CERRADA`, pertenecer al partido y tener al alumno seleccionado.
 - `ASISTIO` usa booleanos estrictos.
 - `ASISTENCIA_ESTADO` debe coincidir con `ASISTENCIAS` de la sesión de partido.
+- Estados presentes `A` y `R` requieren `ASISTIO = true`; estados ausentes `F`, `FJ`, `FI` y `LES` requieren `ASISTIO = false`.
 - `MINUTOS_JUGADOS`, goles y tarjetas son enteros no negativos.
+- Un alumno ausente debe conservar minutos, goles y tarjetas en cero y calificación vacía.
 - `ROJAS` permite máximo 1 y genera `RED_CARD_REVIEW_REQUIRED` cuando la config lo requiere.
 - Calificación usa escala y decimales desde `CONFIG`.
-- Readiness detecta faltantes, no convocados, inconsistencias y `LOW_PARTICIPATION_STREAK` con cero minutos consecutivos.
+- Readiness de partido programado falla con `MATCH_NOT_PLAYED`; no autoriza cierre de estadísticas antes de `JUGADO`.
+- `LOW_PARTICIPATION_STREAK` se calcula cronológicamente por competencia sobre convocatorias autoritativas, aprobadas o posteriores, donde el alumno fue seleccionado final. Participaciones con minutos positivos cortan la racha; partidos no seleccionados, cancelados o de otra competencia no fabrican ceros.
