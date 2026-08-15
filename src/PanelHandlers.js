@@ -138,6 +138,188 @@ function getAppBootstrap() {
   });
 }
 
+function appMatchFields(match) {
+  return {
+    partidoId: match.partidoId,
+    competencia: match.competencia,
+    jornada: match.jornada,
+    rival: match.rival,
+    fecha: match.fecha,
+    horaCitacion: match.horaCitacion,
+    horaPartido: match.horaPartido,
+    sede: match.sede,
+    localVisitante: match.localVisitante,
+    duracionMinutos: match.duracionMinutos,
+    uniforme: match.uniforme,
+    indicaciones: match.indicaciones,
+    estado: match.estado,
+    golesFavor: match.golesFavor,
+    golesContra: match.golesContra,
+    observaciones: match.observaciones
+  };
+}
+
+function getAppMatches() {
+  return safePanelResponse(function() {
+    return panelRuntime().queries.getMatches().map(appMatchFields);
+  });
+}
+
+function appStudentNameMap(students) {
+  var names = {};
+  students.forEach(function(student) {
+    names[student.alumnoId] = [student.nombre, student.apellidos].filter(Boolean).join(' ').trim() || student.alumnoId;
+  });
+  return names;
+}
+
+function appStudentById(students) {
+  var byId = {};
+  students.forEach(function(student) {
+    byId[student.alumnoId] = student;
+  });
+  return byId;
+}
+
+function appCommunicationsErrorCode(error) {
+  if (!error) return '';
+  return error === 'DELIVERY_ATTEMPT_IN_PROGRESS' ? error : 'SEND_ERROR';
+}
+
+function getAppCommunications() {
+  return safePanelResponse(function() {
+    var runtime = panelRuntime();
+    var students = runtime.queries.getStudents();
+    var names = appStudentNameMap(students);
+    var studentsById = appStudentById(students);
+    var matchesById = {};
+    runtime.queries.getMatches().forEach(function(match) {
+      matchesById[match.partidoId] = match;
+    });
+    return {
+      runtimeCapabilities: runtime.queries.getRuntimeCapabilities(),
+      rows: runtime.queries.getCommunications().map(function(row) {
+        var match = matchesById[row.REFERENCIA_ID] || {};
+        var student = studentsById[row.ALUMNO_ID] || {};
+        var errorCode = appCommunicationsErrorCode(row.ERROR);
+        return {
+          communicationId: row.COMUNICACION_ID,
+          tipo: row.TIPO,
+          alumnoId: row.ALUMNO_ID,
+          nombreAlumno: names[row.ALUMNO_ID] || row.ALUMNO_ID,
+          competencia: match.competencia || student.competenciaBase || '',
+          referenciaId: row.REFERENCIA_ID,
+          creadoEn: row.CREADO_EN,
+          enviadoEn: row.ENVIADO_EN,
+          estado: row.ESTADO,
+          intentos: row.INTENTOS,
+          errorCode: errorCode,
+          uncertainDelivery: errorCode === 'DELIVERY_ATTEMPT_IN_PROGRESS',
+          canRetry: row.ESTADO === 'ERROR' && errorCode !== 'DELIVERY_ATTEMPT_IN_PROGRESS'
+        };
+      })
+    };
+  });
+}
+
+function getAppConfiguration() {
+  return safePanelResponse(function() {
+    var runtime = panelRuntime();
+    var ready = runtime.queries.verifyConfigReady();
+    return {
+      ready: ready.ready === true,
+      entries: runtime.queries.getConfigEntries().map(function(entry) {
+        return {
+          group: entry.group,
+          key: entry.key,
+          value: entry.value,
+          type: entry.type,
+          unit: entry.unit,
+          active: entry.active,
+          description: entry.description,
+          modifiedAt: entry.modifiedAt
+        };
+      }),
+      runtimeCapabilities: runtime.queries.getRuntimeCapabilities()
+    };
+  });
+}
+
+function getAppReports() {
+  return safePanelResponse(function() {
+    var runtime = panelRuntime();
+    var students = runtime.queries.getStudents().filter(function(student) { return student.active === true; });
+    var participations = runtime.queries.getParticipations();
+    var participationByStudent = {};
+    var dashboard = runtime.queries.getPanelDashboard();
+    var summary = { A: emptyTeamSummary(), B: emptyTeamSummary() };
+
+    runtime.queries.getMatches().filter(function(match) { return match.estado === 'JUGADO'; }).forEach(function(match) {
+      var bucket = summary[match.competencia];
+      if (!bucket) return;
+      var favor = Number(match.golesFavor);
+      var contra = Number(match.golesContra);
+      bucket.played += 1;
+      bucket.goalsFor += favor;
+      bucket.goalsAgainst += contra;
+      if (favor > contra) bucket.wins += 1;
+      if (favor === contra) bucket.draws += 1;
+      if (favor < contra) bucket.losses += 1;
+    });
+
+    participations.forEach(function(row) {
+      var list = participationByStudent[row.ALUMNO_ID] || [];
+      list.push(row);
+      participationByStudent[row.ALUMNO_ID] = list;
+    });
+
+    return {
+      teamSummary: summary,
+      players: students.map(function(student) {
+        var metrics = runtime.queries.getStudentMetrics(student.alumnoId);
+        var records = participationByStudent[student.alumnoId] || [];
+        var ratings = records.filter(function(record) {
+          return record.CALIFICACION !== '' && record.CALIFICACION !== undefined && record.CALIFICACION !== null;
+        }).map(function(record) { return Number(record.CALIFICACION); });
+        var ratingSum = ratings.reduce(function(sum, rating) { return sum + rating; }, 0);
+        return {
+          studentId: student.alumnoId,
+          nombre: [student.nombre, student.apellidos].filter(Boolean).join(' ').trim(),
+          competencia: student.competenciaBase,
+          nivel: student.nivel,
+          posicionPrincipal: student.posicionPrincipal,
+          finalizedSessions: metrics.finalizedSessions,
+          pendingAbsences: metrics.pendingAbsences,
+          attendanceCount: metrics.attendanceCount,
+          lateCount: metrics.lateCount,
+          justifiedAbsenceCount: metrics.justifiedAbsenceCount,
+          unjustifiedAbsenceCount: metrics.unjustifiedAbsenceCount,
+          injuryCount: metrics.injuryCount,
+          compliancePercentage: metrics.compliancePercentage,
+          physicalPresencePercentage: metrics.physicalPresencePercentage,
+          attendanceStatus: metrics.status,
+          participationRecords: records.length,
+          starts: records.filter(function(record) { return record.CONDICION_INICIAL === 'TITULAR'; }).length,
+          substituteStarts: records.filter(function(record) { return record.CONDICION_INICIAL === 'SUPLENTE'; }).length,
+          minutes: records.reduce(function(sum, record) { return sum + Number(record.MINUTOS_JUGADOS || 0); }, 0),
+          goals: records.reduce(function(sum, record) { return sum + Number(record.GOLES || 0); }, 0),
+          yellowCards: records.reduce(function(sum, record) { return sum + Number(record.AMARILLAS || 0); }, 0),
+          redCards: records.reduce(function(sum, record) { return sum + Number(record.ROJAS || 0); }, 0),
+          averageRating: ratings.length ? ratingSum / ratings.length : null
+        };
+      }),
+      alerts: {
+        sportAlerts: dashboard.sportAlerts || [],
+        readinessIssues: dashboard.readinessIssues || []
+      }
+    };
+  });
+}
+
+function emptyTeamSummary() {
+  return { played: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0 };
+}
+
 function commandCreateSession(input) {
   return withPanelOperation('createSession', function(runtime, operationId) {
     var source = input || {};
@@ -263,6 +445,12 @@ function commandSendPendingCommunications() {
   });
 }
 
+function commandRetryCommunication(communicationId) {
+  return withPanelOperation('retryCommunication', function(runtime, operationId) {
+    return runtime.commands.retryCommunication(communicationId, { operationId: operationId });
+  });
+}
+
 function commandCreateParticipation(input) {
   return withPanelOperation('createParticipation', function(runtime, operationId) {
     var source = input || {};
@@ -348,12 +536,17 @@ if (typeof module !== 'undefined') {
     commandSaveParticipation,
     commandPrepareConvocationCommunications,
     commandResolveAbsence,
+    commandRetryCommunication,
     commandSendPendingCommunications,
     commandSetFinalSelection,
     commandUpdateMatch,
     commandUpdateParticipation,
     commandUpdateSportsState,
     getAppBootstrap,
+    getAppCommunications,
+    getAppConfiguration,
+    getAppMatches,
+    getAppReports,
     getPanelAttendance,
     getPanelConvocation,
     getPanelDashboard,

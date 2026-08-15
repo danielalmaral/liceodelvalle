@@ -236,6 +236,7 @@ function createAppsScriptRuntime(options) {
     evaluateMatch: function(matchId) { return eligibilityService.evaluateMatch(matchId); },
     getAttendances: function() { return attendanceFoundationService.getAttendances(); },
     getCommunications: function() { return communicationService.getCommunications(); },
+    getConfigEntries: function() { return configService.getAll(); },
     getEvents: function() { return auditService.getEvents(); },
     getMatches: function() { return matchService.getMatches(); },
     getParticipations: function() { return participationService.getParticipations(); },
