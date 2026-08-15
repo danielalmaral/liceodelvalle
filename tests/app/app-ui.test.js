@@ -782,3 +782,242 @@ test('APP_NO_UNDEFINED_NULL_RENDER_TEST', () => {
   assert.equal(html.includes('>null<'), false);
   assert.equal(html.includes('[object Object]'), false);
 });
+
+test('APP_CONVOCATION_SWITCH_TO_NO_PROPOSAL_CLEARS_STATE_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.programmedMatches.push({ partidoId: 'PAR-002', competencia: 'A', rival: 'Sin propuesta' });
+  const state = { activeRoute: 'convocations', ...data, selectedProgrammedMatchId: 'PAR-001', selectedConvocationId: 'CON-001', convocation: convocationView() };
+  const controller = createAppClientController({
+    callServer() { throw new Error('unexpected rpc'); },
+    state,
+    render: { route() {} }
+  });
+  controller.selectProgrammedMatch('PAR-002');
+  assert.equal(state.selectedProgrammedMatchId, 'PAR-002');
+  assert.equal(state.selectedConvocationId, '');
+  assert.equal(state.convocation.details.length, 0);
+});
+
+test('APP_CONVOCATION_SWITCH_TO_NO_PROPOSAL_NO_OLD_RPC_TARGET_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.programmedMatches.push({ partidoId: 'PAR-002', competencia: 'A', rival: 'Sin propuesta' });
+  const state = { activeRoute: 'convocations', ...data, selectedProgrammedMatchId: 'PAR-002', selectedConvocationId: '', convocation: { convocationId: '', details: [] } };
+  const html = createAppRenderer({ state }).renderConvocations();
+  assert.equal(html.includes('data-convocation-id="CON-001"'), false);
+  assert.equal(html.includes('CON-001'), false);
+});
+
+test('APP_CONVOCATION_SWITCH_EXISTING_PROPOSAL_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.programmedMatches.push({ partidoId: 'PAR-002', competencia: 'A', rival: 'Rival Dos' });
+  data.referenceData.convocationProposals.push({ CONVOCATORIA_ID: 'CON-002', PARTIDO_ID: 'PAR-002', ESTADO: 'PROPUESTA', TOTAL_OBJETIVO: 12 });
+  const calls = [];
+  const state = { activeRoute: 'convocations', ...data, selectedProgrammedMatchId: 'PAR-001', selectedConvocationId: 'CON-001', convocation: convocationView() };
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) {
+      calls.push({ name, args });
+      onSuccess({ ok: true, data: convocationView({ convocationId: args[0], details: [{ nombre: 'Nuevo' }] }) });
+    },
+    state,
+    render: { route() {} }
+  });
+  controller.selectProgrammedMatch('PAR-002');
+  assert.deepEqual(calls[0], { name: 'getPanelConvocation', args: ['CON-002'] });
+  assert.equal(state.selectedProgrammedMatchId, 'PAR-002');
+  assert.equal(state.selectedConvocationId, 'CON-002');
+});
+
+test('APP_COMPETITION_CHANGE_ATTENDANCE_REHYDRATES_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.openSessions = [
+    { sesionId: 'SES-A', competencia: 'A' },
+    { sesionId: 'SES-B', competencia: 'B' },
+    { sesionId: 'SES-GEN', competencia: 'GENERAL' }
+  ];
+  const calls = [];
+  const state = { activeRoute: 'attendance', selectedCompetition: 'B', ...data, selectedSessionId: 'SES-B', attendance: { rows: [{ nombre: 'Row B' }] } };
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) {
+      calls.push({ name, args });
+      if (name === 'getAppBootstrap') onSuccess({ ok: true, data });
+      if (name === 'getPanelAttendance') onSuccess({ ok: true, data: { sessionId: args[0], rows: [{ nombre: 'Row A' }] } });
+    },
+    state,
+    render: { loading() {}, route() {} }
+  });
+  controller.setCompetition('A');
+  assert.equal(state.selectedCompetition, 'A');
+  assert.notEqual(state.selectedSessionId, 'SES-B');
+  assert.equal(calls.some((call) => call.name === 'getPanelAttendance'), true);
+  assert.equal(state.attendance.rows[0].nombre, 'Row A');
+});
+
+test('APP_COMPETITION_CHANGE_CONVOCATION_REHYDRATES_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.programmedMatches = [
+    { partidoId: 'PAR-A', competencia: 'A', rival: 'A' },
+    { partidoId: 'PAR-B', competencia: 'B', rival: 'B' }
+  ];
+  data.referenceData.convocationProposals = [
+    { CONVOCATORIA_ID: 'CON-A', PARTIDO_ID: 'PAR-A', ESTADO: 'PROPUESTA', TOTAL_OBJETIVO: 12 },
+    { CONVOCATORIA_ID: 'CON-B', PARTIDO_ID: 'PAR-B', ESTADO: 'PROPUESTA', TOTAL_OBJETIVO: 12 }
+  ];
+  const calls = [];
+  const state = { activeRoute: 'convocations', selectedCompetition: 'B', ...data, selectedProgrammedMatchId: 'PAR-B', selectedConvocationId: 'CON-B', convocation: convocationView({ convocationId: 'CON-B' }) };
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) {
+      calls.push({ name, args });
+      if (name === 'getAppBootstrap') onSuccess({ ok: true, data });
+      if (name === 'getPanelConvocation') onSuccess({ ok: true, data: convocationView({ convocationId: args[0], details: [{ nombre: 'A' }] }) });
+    },
+    state,
+    render: { loading() {}, route() {} }
+  });
+  controller.setCompetition('A');
+  assert.equal(state.selectedProgrammedMatchId, 'PAR-A');
+  assert.equal(state.selectedConvocationId, 'CON-A');
+  assert.equal(calls.some((call) => call.name === 'getPanelConvocation' && call.args[0] === 'CON-A'), true);
+});
+
+test('APP_COMPETITION_CHANGE_INVALID_SELECTION_CLEARED_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.openSessions = [{ sesionId: 'SES-A', competencia: 'A' }, { sesionId: 'SES-B', competencia: 'B' }];
+  data.referenceData.programmedMatches = [{ partidoId: 'PAR-A', competencia: 'A', rival: 'A' }, { partidoId: 'PAR-B', competencia: 'B', rival: 'B' }];
+  data.referenceData.convocationProposals = [];
+  const state = { activeRoute: 'convocations', selectedCompetition: 'B', ...data, selectedSessionId: 'SES-B', selectedProgrammedMatchId: 'PAR-B', selectedConvocationId: 'CON-B', convocation: convocationView({ convocationId: 'CON-B' }) };
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) { onSuccess({ ok: true, data }); },
+    state,
+    render: { loading() {}, route() {} }
+  });
+  controller.setCompetition('A');
+  assert.notEqual(state.selectedSessionId, 'SES-B');
+  assert.notEqual(state.selectedProgrammedMatchId, 'PAR-B');
+  assert.equal(state.selectedConvocationId, '');
+  assert.equal(state.convocation.details.length, 0);
+});
+
+test('APP_STALE_BOOTSTRAP_FAILURE_IGNORED_TEST', () => {
+  const errors = [];
+  const calls = [];
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess, onFailure) { calls.push({ name, onSuccess, onFailure }); },
+    state: {},
+    render: { loading() {}, route() {}, error(message) { errors.push(message); } }
+  });
+  controller.route('dashboard');
+  controller.route('students');
+  calls[0].onFailure({ ok: false, code: 'REQUIRED_FIELD' });
+  assert.deepEqual(errors, []);
+});
+
+test('APP_STALE_ATTENDANCE_FAILURE_IGNORED_TEST', () => {
+  const errors = [];
+  const calls = [];
+  const state = { activeRoute: 'attendance', ...bootstrap(), selectedSessionId: 'SES-001' };
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess, onFailure) { calls.push({ name, args, onSuccess, onFailure }); },
+    state,
+    render: { route() {}, error(message) { errors.push(message); } }
+  });
+  controller.loadAttendance('SES-001');
+  controller.route('students');
+  calls[0].onFailure({ ok: false, code: 'REQUIRED_FIELD' });
+  assert.deepEqual(errors, []);
+});
+
+test('APP_STALE_CONVOCATION_FAILURE_IGNORED_TEST', () => {
+  const errors = [];
+  const calls = [];
+  const state = { activeRoute: 'convocations', ...bootstrap(), selectedProgrammedMatchId: 'PAR-001', selectedConvocationId: 'CON-001' };
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess, onFailure) { calls.push({ name, args, onSuccess, onFailure }); },
+    state,
+    render: { route() {}, error(message) { errors.push(message); } }
+  });
+  controller.loadConvocation('CON-001', undefined, 'PAR-001');
+  state.selectedProgrammedMatchId = 'PAR-002';
+  controller.route('students');
+  calls[0].onFailure({ ok: false, code: 'REQUIRED_FIELD' });
+  assert.deepEqual(errors, []);
+});
+
+test('APP_STALE_FAILURE_NO_VISIBLE_ERROR_TEST', () => {
+  const errors = [];
+  const calls = [];
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess, onFailure) { calls.push({ onFailure }); },
+    state: {},
+    render: { loading() {}, route() {}, error(message) { errors.push(message); } }
+  });
+  controller.route('dashboard');
+  controller.route('students');
+  calls[0].onFailure({ ok: false, code: 'REQUIRED_FIELD' });
+  assert.deepEqual(errors, []);
+});
+
+test('APP_UNRELATED_FAILURE_DOES_NOT_CLEAR_GENERATE_GUARD_TEST', () => {
+  const calls = [];
+  const state = { activeRoute: 'convocations', ...bootstrap({ referenceData: { ...bootstrap().referenceData, convocationProposals: [] } }), convocationGeneratePending: true };
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess, onFailure) { calls.push({ name, args, onSuccess, onFailure }); },
+    state,
+    render: { route() {}, error() {} }
+  });
+  controller.loadAttendance('SES-001');
+  calls[0].onFailure({ ok: false, code: 'REQUIRED_FIELD' });
+  controller.generateConvocation('PAR-001');
+  assert.equal(state.convocationGeneratePending, true);
+  assert.equal(calls.filter((call) => call.name === 'commandGenerateConvocation').length, 0);
+});
+
+function manyConvocationDetails() {
+  return Array.from({ length: 10 }, (_, index) => ({
+    ...convocationView().details[index % 2],
+    ALUMNO_ID: `ALU-${index}`,
+    nombre: index === 0 ? 'Visible Uno' : `Oculto ${index}`,
+    ELEGIBILITY_STATUS: index < 8 ? 'ELIGIBLE' : 'INELIGIBLE',
+    prioridadRotacion: index < 3,
+    seleccionadoFinal: index < 6,
+    posicionAsignada: index === 0 ? 'PO' : index < 4 ? 'DEF' : index < 7 ? 'MED' : 'DEL'
+  }));
+}
+
+test('APP_CONVOCATION_FILTER_KPI_INVARIANT_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.convocationProposals[0].TOTAL_OBJETIVO = 12;
+  const state = {
+    activeRoute: 'convocations',
+    ...data,
+    convocation: convocationView({ details: manyConvocationDetails() }),
+    convocationFilters: { search: 'Visible Uno' }
+  };
+  const html = createAppRenderer({ state }).renderConvocations();
+  assert.equal(html.includes('8 / 10'), true);
+  assert.equal(html.includes('<strong>3</strong>'), true);
+  assert.equal(html.includes('6 / 12'), true);
+  assert.equal(html.includes('Visible Uno'), true);
+  assert.equal(html.includes('Oculto 1'), false);
+});
+
+test('APP_CONVOCATION_POSITION_COVERAGE_FILTER_INVARIANT_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.convocationProposals[0] = {
+    ...data.referenceData.convocationProposals[0],
+    MIN_PORTEROS_SNAPSHOT: 1,
+    MIN_DEFENSAS_SNAPSHOT: 3,
+    MIN_MEDIOS_SNAPSHOT: 2,
+    MIN_DELANTEROS_SNAPSHOT: 1
+  };
+  const state = {
+    activeRoute: 'convocations',
+    ...data,
+    convocation: convocationView({ details: manyConvocationDetails() }),
+    convocationFilters: { position: 'PO' }
+  };
+  const html = createAppRenderer({ state }).renderConvocations();
+  assert.equal(html.includes('PO 1/1'), true);
+  assert.equal(html.includes('DEF 3/3'), true);
+  assert.equal(html.includes('MED 2/2'), true);
+  assert.equal(html.includes('DEL 0/1'), true);
+});
