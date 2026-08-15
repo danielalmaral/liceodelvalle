@@ -87,6 +87,20 @@ function createAppClientController(dependencies) {
     return matches[0] && matches[0].partidoId || '';
   }
 
+  function validPlayedMatchId(candidate) {
+    var matches = ((state.referenceData && state.referenceData.playedMatches) || []).filter(function(match) {
+      return competitionMatches(match.competencia);
+    });
+    return matches.some(function(match) { return match.partidoId === candidate; }) ? candidate : '';
+  }
+
+  function defaultPlayedMatchId() {
+    var matches = ((state.referenceData && state.referenceData.playedMatches) || []).filter(function(match) {
+      return competitionMatches(match.competencia);
+    });
+    return matches[0] && matches[0].partidoId || '';
+  }
+
   function safeErrorMessage(response) {
     var code = response && typeof response.code === 'string' ? response.code : '';
     var message = 'No se pudo completar la operacion solicitada.';
@@ -150,6 +164,21 @@ function createAppClientController(dependencies) {
     }
     if (route === 'convocations') {
       return hydrateConvocations(token);
+    }
+    if (route === 'matches') {
+      return hydrateMatches(token);
+    }
+    if (route === 'postmatch') {
+      return hydratePostMatch(token);
+    }
+    if (route === 'reports') {
+      return hydrateReports(token);
+    }
+    if (route === 'communications') {
+      return hydrateCommunications(token);
+    }
+    if (route === 'config') {
+      return hydrateConfiguration(token);
     }
     state.loading = false;
     if (typeof render.route === 'function') {
@@ -326,6 +355,89 @@ function createAppClientController(dependencies) {
     return loadConvocation(convocationId(existing), token, selected);
   }
 
+  function hydrateMatches(token) {
+    return rpc('getAppMatches', [], function(data) {
+      state.matches = data || [];
+      state.loading = false;
+      if (typeof render.route === 'function') render.route('matches');
+    }, {
+      isCurrent: function() { return isFresh(token, 'matches'); }
+    });
+  }
+
+  function loadMatches() {
+    var token = nextEpoch('matches');
+    state.loading = true;
+    return hydrateMatches(token);
+  }
+
+  function hydratePostMatch(token) {
+    var selected = validPlayedMatchId(state.selectedPlayedMatchId) || defaultPlayedMatchId();
+    state.selectedPlayedMatchId = selected;
+    if (!selected) {
+      state.postMatch = { matchId: '', rows: [] };
+      state.loading = false;
+      if (typeof render.route === 'function') render.route('postmatch');
+      return null;
+    }
+    return loadPostMatch(selected, token);
+  }
+
+  function loadPostMatch(matchId, existingToken) {
+    var token = existingToken || nextEpoch('postmatch');
+    var selected = validPlayedMatchId(matchId) || '';
+    state.selectedPlayedMatchId = selected;
+    state.postMatch = { matchId: selected, rows: [] };
+    if (typeof render.route === 'function') render.route('postmatch');
+    if (!selected) {
+      state.loading = false;
+      return null;
+    }
+    return rpc('getPanelParticipation', [selected], function(data) {
+      state.postMatch = data || { matchId: selected, rows: [] };
+      state.loading = false;
+      if (typeof render.route === 'function') render.route('postmatch');
+    }, {
+      isCurrent: function() { return isFresh(token, 'postmatch') && state.selectedPlayedMatchId === selected; }
+    });
+  }
+
+  function selectPlayedMatch(matchId) {
+    var token = nextEpoch('postmatch');
+    state.loading = true;
+    return loadPostMatch(matchId, token);
+  }
+
+  function hydrateReports(token) {
+    return rpc('getAppReports', [], function(data) {
+      state.reports = data || {};
+      state.loading = false;
+      if (typeof render.route === 'function') render.route('reports');
+    }, {
+      isCurrent: function() { return isFresh(token, 'reports'); }
+    });
+  }
+
+  function hydrateCommunications(token) {
+    return rpc('getAppCommunications', [], function(data) {
+      state.communications = data || { rows: [] };
+      state.loading = false;
+      if (typeof render.route === 'function') render.route('communications');
+    }, {
+      isCurrent: function() { return isFresh(token, 'communications'); }
+    });
+  }
+
+  function hydrateConfiguration(token) {
+    return rpc('getAppConfiguration', [], function(data) {
+      state.configuration = data || { entries: [] };
+      state.loading = false;
+      if (typeof render.route === 'function') render.route('config');
+    }, {
+      isCurrent: function() { return isFresh(token, 'config'); }
+    });
+  }
+
   function setCompetition(value) {
     var next = String(value || '').trim().toUpperCase();
     if (next !== 'ALL' && next !== 'A' && next !== 'B') {
@@ -342,7 +454,78 @@ function createAppClientController(dependencies) {
       state.selectedConvocationId = '';
       state.convocation = { convocationId: '', details: [] };
     }
+    if (!validPlayedMatchId(state.selectedPlayedMatchId)) {
+      state.selectedPlayedMatchId = '';
+      state.postMatch = { rows: [] };
+    }
     return loadBootstrap(state.activeRoute || 'dashboard');
+  }
+
+  function createMatch(input) {
+    var originRoute = state.activeRoute;
+    if (state.matchWritePending) return null;
+    state.matchWritePending = true;
+    return rpc('commandCreateMatch', [input || {}], function() {
+      if (originRoute === 'matches' && state.activeRoute === 'matches') loadBootstrap('matches');
+    }, {
+      isCurrent: function() { return originRoute === 'matches' && state.activeRoute === 'matches'; },
+      onSettled: function() { state.matchWritePending = false; }
+    });
+  }
+
+  function updateMatch(matchId, updates, actor) {
+    var originRoute = state.activeRoute;
+    var originMatchId = matchId;
+    if (state.matchWritePending) return null;
+    state.matchWritePending = true;
+    return rpc('commandUpdateMatch', [matchId, updates || {}, actor], function() {
+      if (originRoute === 'matches' && state.activeRoute === 'matches') loadBootstrap('matches');
+    }, {
+      isCurrent: function() { return originRoute === 'matches' && state.activeRoute === 'matches' && originMatchId === matchId; },
+      onSettled: function() { state.matchWritePending = false; }
+    });
+  }
+
+  function markMatchPlayed(matchId, score, actor) {
+    var originRoute = state.activeRoute;
+    if (state.matchWritePending) return null;
+    state.matchWritePending = true;
+    return rpc('commandMarkMatchPlayed', [matchId, score || {}, actor], function() {
+      if (originRoute === 'matches' && state.activeRoute === 'matches') loadBootstrap('matches');
+    }, {
+      isCurrent: function() { return originRoute === 'matches' && state.activeRoute === 'matches'; },
+      onSettled: function() { state.matchWritePending = false; }
+    });
+  }
+
+  function cancelMatch(matchId, actor) {
+    var originRoute = state.activeRoute;
+    if (state.matchWritePending) return null;
+    state.matchWritePending = true;
+    return rpc('commandCancelMatch', [matchId, actor], function() {
+      if (originRoute === 'matches' && state.activeRoute === 'matches') loadBootstrap('matches');
+    }, {
+      isCurrent: function() { return originRoute === 'matches' && state.activeRoute === 'matches'; },
+      onSettled: function() { state.matchWritePending = false; }
+    });
+  }
+
+  function saveParticipation(matchId, studentId, payload, actor) {
+    var originRoute = state.activeRoute;
+    var originMatchId = matchId;
+    state.participationWriteByStudent = state.participationWriteByStudent || {};
+    if (state.participationWriteByStudent[studentId]) return null;
+    state.participationWriteByStudent[studentId] = true;
+    return rpc('commandSaveParticipation', [matchId, studentId, payload || {}, actor], function() {
+      if (originRoute === 'postmatch' && state.activeRoute === 'postmatch' && state.selectedPlayedMatchId === originMatchId) {
+        loadPostMatch(originMatchId);
+      }
+    }, {
+      isCurrent: function() {
+        return originRoute === 'postmatch' && state.activeRoute === 'postmatch' && state.selectedPlayedMatchId === originMatchId;
+      },
+      onSettled: function() { state.participationWriteByStudent[studentId] = false; }
+    });
   }
 
   function markAttendance(sessionId, studentId, attendanceState) {
@@ -484,33 +667,65 @@ function createAppClientController(dependencies) {
   }
 
   function sendPendingCommunications() {
-    var capabilities = (state.referenceData && state.referenceData.runtimeCapabilities) || {};
+    var capabilities = (state.communications && state.communications.runtimeCapabilities) || (state.referenceData && state.referenceData.runtimeCapabilities) || {};
+    var originRoute = state.activeRoute;
     if (capabilities.externalMailEnabled !== true) {
       throw new Error('PANEL_CLIENT_MAIL_DISABLED');
     }
+    if (state.communicationWritePending) return null;
+    state.communicationWritePending = true;
     return rpc('commandSendPendingCommunications', [], function() {
-      if (state.activeRoute) loadBootstrap(state.activeRoute);
+      if (originRoute === 'communications' && state.activeRoute === 'communications') loadBootstrap('communications');
+    }, {
+      isCurrent: function() { return originRoute === 'communications' && state.activeRoute === 'communications'; },
+      onSettled: function() { state.communicationWritePending = false; }
+    });
+  }
+
+  function retryCommunication(communicationId) {
+    var capabilities = (state.communications && state.communications.runtimeCapabilities) || {};
+    var originRoute = state.activeRoute;
+    state.communicationRetryPendingById = state.communicationRetryPendingById || {};
+    if (capabilities.externalMailEnabled !== true) {
+      throw new Error('PANEL_CLIENT_MAIL_DISABLED');
+    }
+    if (state.communicationRetryPendingById[communicationId]) return null;
+    state.communicationRetryPendingById[communicationId] = true;
+    return rpc('commandRetryCommunication', [communicationId], function() {
+      if (originRoute === 'communications' && state.activeRoute === 'communications') loadBootstrap('communications');
+    }, {
+      isCurrent: function() { return originRoute === 'communications' && state.activeRoute === 'communications'; },
+      onSettled: function() { state.communicationRetryPendingById[communicationId] = false; }
     });
   }
 
   return {
     approveConvocation: approveConvocation,
     assignPosition: assignPosition,
+    cancelMatch: cancelMatch,
+    createMatch: createMatch,
     generateConvocation: generateConvocation,
     isFresh: isFresh,
     loadAttendance: loadAttendance,
     loadBootstrap: loadBootstrap,
     loadConvocation: loadConvocation,
+    loadMatches: loadMatches,
+    loadPostMatch: loadPostMatch,
     markAttendance: markAttendance,
+    markMatchPlayed: markMatchPlayed,
     nextEpoch: nextEpoch,
     prepareConvocationCommunications: prepareConvocationCommunications,
     resolveAbsence: resolveAbsence,
+    retryCommunication: retryCommunication,
     route: route,
+    saveParticipation: saveParticipation,
     selectAttendanceSession: selectAttendanceSession,
+    selectPlayedMatch: selectPlayedMatch,
     selectProgrammedMatch: selectProgrammedMatch,
     sendPendingCommunications: sendPendingCommunications,
     setCompetition: setCompetition,
-    setFinalSelection: setFinalSelection
+    setFinalSelection: setFinalSelection,
+    updateMatch: updateMatch
   };
 }
 

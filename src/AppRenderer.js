@@ -9,11 +9,11 @@ function createAppRenderer(dependencies) {
     ['students', 'Alumnos', 'Consulta la plantilla deportiva y su clasificacion actual'],
     ['attendance', 'Asistencias', 'Registra y da seguimiento a la asistencia deportiva'],
     ['convocations', 'Convocatorias', 'Gestiona, revisa y prepara convocatorias a partidos'],
-    ['matches', 'Partidos', 'Modulo preparado para el siguiente safe batch'],
-    ['postmatch', 'Post Partido', 'Modulo preparado para el siguiente safe batch'],
-    ['reports', 'Reportes', 'Modulo preparado para el siguiente safe batch'],
-    ['communications', 'Comunicaciones', 'Modulo preparado para el siguiente safe batch'],
-    ['config', 'Configuracion', 'Modulo preparado para el siguiente safe batch']
+    ['matches', 'Partidos', 'Gestiona calendario, marcador y estado de partidos'],
+    ['postmatch', 'Post Partido', 'Captura participacion desde asistencia canonica'],
+    ['reports', 'Reportes', 'Consulta rendimiento y alertas operativas'],
+    ['communications', 'Comunicaciones', 'Monitorea envios operativos seguros'],
+    ['config', 'Configuracion', 'Configuracion operativa solo lectura durante el piloto']
   ];
 
   function esc(value) {
@@ -120,6 +120,12 @@ function createAppRenderer(dependencies) {
     return '<select data-filter="' + esc(name) + '">' + values.map(function(item) {
       return '<option value="' + esc(item[0]) + '"' + (item[0] === selected ? ' selected' : '') + '>' + esc(item[1]) + '</option>';
     }).join('') + '</select>';
+  }
+
+  function optionTags(values, selected) {
+    return values.map(function(item) {
+      return '<option value="' + esc(item[0]) + '"' + (String(item[0]) === String(selected) ? ' selected' : '') + '>' + esc(item[1]) + '</option>';
+    }).join('');
   }
 
   function renderStudentFilters() {
@@ -368,8 +374,290 @@ function createAppRenderer(dependencies) {
     return '<section class="panel"><h3>Acciones</h3><label>Aprobado por<input id="app-approval-actor" autocomplete="off"' + (canApprove ? '' : ' disabled') + '></label><button class="primary" data-action="convocation-approve" data-convocation-id="' + esc(activeConvocationId || '') + '"' + (canApprove ? '' : ' disabled') + '>Aprobar convocatoria</button><button data-action="communication-prepare" data-convocation-id="' + esc(activeConvocationId || '') + '"' + (canPrepare ? '' : ' disabled') + '>Preparar comunicaciones</button><button data-action="communication-send" ' + (canSend ? '' : 'disabled') + '>Enviar pendientes</button></section>';
   }
 
-  function renderScaffold() {
-    return '<section class="screen scaffold-screen">' + emptyState('Modulo preparado para el siguiente safe batch') + '</section>';
+  function appMatches() {
+    return (state.matches || []).filter(function(match) {
+      return competitionMatches(match.competencia);
+    });
+  }
+
+  function filteredMatches() {
+    var filters = state.matchFilters || {};
+    return appMatches().filter(function(match) {
+      var search = String(filters.search || '').toLowerCase();
+      if (filters.competition && filters.competition !== 'ALL' && match.competencia !== filters.competition) return false;
+      if (filters.status && filters.status !== 'ALL' && match.estado !== filters.status) return false;
+      if (search && [match.rival, match.sede, match.jornada].join(' ').toLowerCase().indexOf(search) === -1) return false;
+      return true;
+    });
+  }
+
+  function renderMatches() {
+    var matches = filteredMatches();
+    var all = appMatches();
+    var programmed = all.filter(function(match) { return match.estado === 'PROGRAMADO'; });
+    var played = all.filter(function(match) { return match.estado === 'JUGADO'; });
+    var cancelled = all.filter(function(match) { return match.estado === 'CANCELADO'; });
+    return '<section class="screen matches-screen">' +
+      '<div class="kpi-grid kpi-grid--five">' +
+      kpi('Programados', programmed.length) + kpi('Jugados', played.length) + kpi('Cancelados', cancelled.length) +
+      kpi('Proximo partido A', nextMatchLabel(programmed, 'A')) + kpi('Proximo partido B', nextMatchLabel(programmed, 'B')) +
+      '</div>' + renderMatchFilters() + renderMatchCreateForm() + renderMatchesTable(matches) + '</section>';
+  }
+
+  function nextMatchLabel(matches, competition) {
+    var match = matches.filter(function(item) { return item.competencia === competition; })[0] || null;
+    return match ? [match.rival, match.fecha].filter(Boolean).join(' | ') : '-';
+  }
+
+  function renderMatchFilters() {
+    var filters = state.matchFilters || {};
+    return '<div class="filters"><input data-match-filter="search" placeholder="Buscar rival, sede o jornada" value="' + esc(filters.search || '') + '">' +
+      select('competition', [['ALL', 'Todas'], ['A', 'Liga A'], ['B', 'Liga B']], filters.competition || 'ALL').replace(/data-filter=/g, 'data-match-filter=') +
+      '<select data-match-filter="status">' + optionTags([['ALL', 'Todos'], ['PROGRAMADO', 'Programado'], ['JUGADO', 'Jugado'], ['CANCELADO', 'Cancelado']], filters.status || 'ALL') + '</select></div>';
+  }
+
+  function renderMatchCreateForm() {
+    var selected = selectedCompetition();
+    var preset = selected === 'A' || selected === 'B' ? selected : '';
+    return '<section class="panel"><h3>Nuevo partido</h3><div class="form-grid match-form" data-form="match-create">' +
+      '<label>Competencia<select name="COMPETENCIA">' + optionTags([['', 'Seleccionar'], ['A', 'Liga A'], ['B', 'Liga B']], preset) + '</select></label>' +
+      '<label>Jornada<input name="JORNADA"></label><label>Rival<input name="RIVAL"></label><label>Fecha<input name="FECHA" type="date"></label>' +
+      '<label>Hora de citacion<input name="HORA_CITACION" type="time"></label><label>Hora del partido<input name="HORA_PARTIDO" type="time"></label>' +
+      '<label>Sede<input name="SEDE"></label><label>Local / Visitante<select name="LOCAL_VISITANTE">' + optionTags([['', 'Seleccionar'], ['LOCAL', 'Local'], ['VISITANTE', 'Visitante']], '') + '</select></label>' +
+      '<label>Duracion en minutos<input name="DURACION_MINUTOS" type="number" min="1"></label><label>Uniforme<input name="UNIFORME"></label>' +
+      '<label>Indicaciones<input name="INDICACIONES"></label><label>Observaciones<input name="OBSERVACIONES"></label>' +
+      '<button class="primary" data-action="match-create"' + (state.matchWritePending ? ' disabled' : '') + '>Crear partido</button></div></section>';
+  }
+
+  function renderMatchesTable(matches) {
+    if (!matches.length) return emptyState('Sin partidos');
+    return '<div class="table-wrap"><table id="app-matches-table"><thead><tr><th>Competencia</th><th>Jornada</th><th>Rival</th><th>Fecha</th><th>Hora</th><th>Sede</th><th>Local/Visitante</th><th>Estado</th><th>Marcador</th><th>Acciones</th></tr></thead><tbody>' +
+      matches.map(function(match) {
+        return '<tr><td>' + badge(match.competencia, 'competition') + '</td><td>' + esc(valueOrDash(match.jornada)) + '</td><td>' + esc(valueOrDash(match.rival)) + '</td><td>' + esc(valueOrDash(match.fecha)) + '</td><td>' + esc(valueOrDash(match.horaPartido)) + '</td><td>' + esc(valueOrDash(match.sede)) + '</td><td>' + esc(valueOrDash(match.localVisitante)) + '</td><td>' + badge(statusLabel(match.estado), 'state') + '</td><td>' + esc(scoreLabel(match)) + '</td><td>' + renderMatchActions(match) + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+
+  function statusLabel(status) {
+    if (status === 'PROGRAMADO') return 'Programado';
+    if (status === 'JUGADO') return 'Jugado';
+    if (status === 'CANCELADO') return 'Cancelado';
+    return valueOrDash(status);
+  }
+
+  function scoreLabel(match) {
+    return match.estado === 'JUGADO' ? valueOrDash(match.golesFavor) + ' - ' + valueOrDash(match.golesContra) : '-';
+  }
+
+  function renderMatchActions(match) {
+    if (match.estado !== 'PROGRAMADO') return '<span class="muted">Solo lectura</span>';
+    return '<button data-action="match-update" data-match-id="' + esc(match.partidoId) + '">Editar</button> <input class="score-input" data-score-for="' + esc(match.partidoId) + '" type="number" min="0" placeholder="GF"><input class="score-input" data-score-against="' + esc(match.partidoId) + '" type="number" min="0" placeholder="GC"><button data-action="match-mark-played" data-match-id="' + esc(match.partidoId) + '">Marcar como jugado</button> <button data-action="match-cancel" data-match-id="' + esc(match.partidoId) + '">Cancelar partido</button>';
+  }
+
+  function playedMatches() {
+    return ((state.referenceData && state.referenceData.playedMatches) || []).filter(function(match) { return competitionMatches(match.competencia); });
+  }
+
+  function activePlayedMatch() {
+    var id = state.selectedPlayedMatchId || (playedMatches()[0] && playedMatches()[0].partidoId) || '';
+    return playedMatches().filter(function(match) { return match.partidoId === id; })[0] || null;
+  }
+
+  function renderPostMatch() {
+    var match = activePlayedMatch();
+    var view = state.postMatch || { rows: [] };
+    var consistent = !!match && view.matchId === match.partidoId;
+    var rows = consistent ? (view.rows || []) : [];
+    if (!playedMatches().length) return '<section class="screen postmatch-screen">' + emptyState('Sin partidos jugados') + '</section>';
+    return '<section class="screen postmatch-screen"><div class="toolbar">' + renderPlayedMatchSelector() + '</div>' +
+      renderPostMatchSummary(match, rows, view) + renderReadiness(view) + renderPostMatchTable(rows, match) + '</section>';
+  }
+
+  function renderPlayedMatchSelector() {
+    var selected = state.selectedPlayedMatchId || '';
+    return '<select id="app-postmatch-match">' + playedMatches().map(function(match) {
+      return '<option value="' + esc(match.partidoId) + '"' + (match.partidoId === selected ? ' selected' : '') + '>' + esc([match.competencia, match.rival, match.fecha].filter(Boolean).join(' | ')) + '</option>';
+    }).join('') + '</select>';
+  }
+
+  function renderPostMatchSummary(match, rows, view) {
+    var attended = rows.filter(function(row) { return row.ASISTIO_DERIVADO === true; }).length;
+    var absent = rows.filter(function(row) { return row.ASISTIO_DERIVADO === false; }).length;
+    var registered = rows.filter(function(row) { return row.PARTICIPACION_ID; }).length;
+    var issueCount = ((view.issues || []).length + (((view.readiness || {}).errors || []).length));
+    return '<div class="kpi-grid kpi-grid--five">' +
+      kpi('Partido', match && [match.competencia, match.jornada, match.rival].filter(Boolean).join(' | '), match && [match.fecha, scoreLabel(match), match.duracionMinutos].filter(Boolean).join(' | ')) +
+      kpi('Convocados en vista', rows.length) + kpi('Con asistencia', attended) + kpi('Ausentes', absent) + kpi('Participaciones registradas', registered + ' / alertas ' + issueCount) + '</div>';
+  }
+
+  function renderReadiness(view) {
+    var items = (view.issues || []).concat(((view.readiness || {}).errors || []).map(function(code) { return { code: code }; }), ((view.readiness || {}).alerts || []).map(function(code) { return { code: code }; }));
+    if (!items.length) return '';
+    return '<div class="callouts">' + items.map(function(item) {
+      var code = item.code || item;
+      var label = code === 'PANEL_POSTMATCH_ATTENDANCE_REQUIRED' ? 'Falta registrar asistencia del partido' : code;
+      return '<div class="callout">' + esc(label) + '</div>';
+    }).join('') + '</div>';
+  }
+
+  function renderPostMatchTable(rows, match) {
+    if (!rows.length) return emptyState('Sin registros de participacion');
+    return '<div class="table-wrap"><table id="app-postmatch-table"><thead><tr><th>Jugador</th><th>Estado de asistencia</th><th>Asistio</th><th>Condicion inicial</th><th>Minutos</th><th>Goles</th><th>Amarillas</th><th>Rojas</th><th>Calificacion</th><th>Observaciones</th><th>Estado de captura</th><th>Accion</th></tr></thead><tbody>' +
+      rows.map(function(row) { return renderPostMatchRow(row, match); }).join('') + '</tbody></table></div>';
+  }
+
+  function ratingConfig() {
+    var entries = ((state.configuration || {}).entries || []);
+    var byKey = {};
+    entries.forEach(function(entry) { byKey[entry.key] = entry.value; });
+    return { min: byKey.ESCALA_CALIFICACION_MIN, max: byKey.ESCALA_CALIFICACION_MAX, decimals: byKey.CALIFICACION_DECIMALES === true };
+  }
+
+  function renderPostMatchRow(row, match) {
+    var attended = row.ASISTIO_DERIVADO === true;
+    var missing = !row.ASISTENCIA_ESTADO;
+    var locked = !attended || missing;
+    var rating = ratingConfig();
+    var disabled = locked || (state.participationWriteByStudent && state.participationWriteByStudent[row.ALUMNO_ID]);
+    return '<tr><td>' + esc(row.nombre) + '</td><td>' + badge(row.ASISTENCIA_ESTADO || 'Pendiente', 'state') + '</td><td>' + esc(attended ? 'Si' : 'No') + '</td>' +
+      '<td><select data-participation-field="CONDICION_INICIAL" data-student-id="' + esc(row.ALUMNO_ID) + '"' + (disabled ? ' disabled' : '') + '>' + optionTags([['', 'Seleccionar'], ['TITULAR', 'Titular'], ['SUPLENTE', 'Suplente']], attended ? row.CONDICION_INICIAL : '') + '</select></td>' +
+      '<td><input data-participation-field="MINUTOS_JUGADOS" data-student-id="' + esc(row.ALUMNO_ID) + '" type="number" min="0" max="' + esc(match && match.duracionMinutos) + '" value="' + esc(attended ? valueOrDash(row.MINUTOS_JUGADOS) : 0) + '"' + (disabled ? ' disabled' : '') + '></td>' +
+      '<td><input data-participation-field="GOLES" data-student-id="' + esc(row.ALUMNO_ID) + '" type="number" min="0" value="' + esc(attended ? valueOrDash(row.GOLES) : 0) + '"' + (disabled ? ' disabled' : '') + '></td>' +
+      '<td><input data-participation-field="AMARILLAS" data-student-id="' + esc(row.ALUMNO_ID) + '" type="number" min="0" value="' + esc(attended ? valueOrDash(row.AMARILLAS) : 0) + '"' + (disabled ? ' disabled' : '') + '></td>' +
+      '<td><input data-participation-field="ROJAS" data-student-id="' + esc(row.ALUMNO_ID) + '" type="number" min="0" value="' + esc(attended ? valueOrDash(row.ROJAS) : 0) + '"' + (disabled ? ' disabled' : '') + '></td>' +
+      '<td><input data-participation-field="CALIFICACION" data-student-id="' + esc(row.ALUMNO_ID) + '" type="number" min="' + esc(valueOrDash(rating.min)) + '" max="' + esc(valueOrDash(rating.max)) + '" step="' + (rating.decimals ? '0.1' : '1') + '" value="' + esc(attended ? valueOrDash(row.CALIFICACION) : '') + '"' + (disabled ? ' disabled' : '') + '></td>' +
+      '<td><input data-participation-field="OBSERVACIONES" data-student-id="' + esc(row.ALUMNO_ID) + '" value=""' + (disabled ? ' disabled' : '') + '></td><td>' + esc(row.PARTICIPACION_ID ? 'Registrado' : (missing ? 'Falta registrar asistencia del partido' : 'Pendiente')) + '</td><td><button data-action="participation-save" data-match-id="' + esc(match && match.partidoId) + '" data-student-id="' + esc(row.ALUMNO_ID) + '"' + (disabled ? ' disabled' : '') + '>Guardar</button></td></tr>';
+  }
+
+  function renderReports() {
+    var reports = state.reports || { teamSummary: {}, players: [], alerts: {} };
+    var players = filteredReportPlayers(reports.players || []);
+    return '<section class="screen reports-screen">' + renderReportSummary(reports.teamSummary || {}) + renderReportFilters() + renderReportAlerts(reports.alerts || {}) + renderReportTable(players) + '</section>';
+  }
+
+  function renderReportSummary(summary) {
+    var keys = selectedCompetition() === 'ALL' ? ['A', 'B'] : [selectedCompetition()];
+    return '<div class="section-grid">' + keys.map(function(key) {
+      var item = summary[key] || {};
+      return '<section class="panel"><h3>Liga ' + esc(key) + '</h3><div class="kpi-grid kpi-grid--compact">' + kpi('Partidos jugados', item.played) + kpi('Ganados', item.wins) + kpi('Empatados', item.draws) + kpi('Perdidos', item.losses) + kpi('Goles a favor', item.goalsFor) + kpi('Goles en contra', item.goalsAgainst) + '</div></section>';
+    }).join('') + '</div>';
+  }
+
+  function filteredReportPlayers(players) {
+    var filters = state.reportFilters || {};
+    return players.filter(function(player) {
+      var search = String(filters.search || '').toLowerCase();
+      if (!competitionMatches(player.competencia)) return false;
+      if (search && String(player.nombre || '').toLowerCase().indexOf(search) === -1) return false;
+      if (filters.level && filters.level !== 'ALL' && player.nivel !== filters.level) return false;
+      if (filters.position && filters.position !== 'ALL' && player.posicionPrincipal !== filters.position) return false;
+      return true;
+    });
+  }
+
+  function renderReportFilters() {
+    var filters = state.reportFilters || {};
+    return '<div class="filters"><input data-report-filter="search" placeholder="Buscar jugador" value="' + esc(filters.search || '') + '">' +
+      '<select data-report-filter="level">' + optionTags([['ALL', 'Todos'], ['A1', 'A1'], ['A2', 'A2'], ['B1', 'B1'], ['B2', 'B2']], filters.level || 'ALL') + '</select>' +
+      '<select data-report-filter="position">' + optionTags([['ALL', 'Todas'], ['PO', 'PO'], ['DEF', 'DEF'], ['MED', 'MED'], ['DEL', 'DEL']], filters.position || 'ALL') + '</select></div>';
+  }
+
+  function renderReportAlerts(alerts) {
+    var list = (alerts.sportAlerts || []).concat(alerts.readinessIssues || []);
+    return '<section class="panel panel--wide"><h3>Alertas</h3>' + (list.length ? '<ul class="alert-list">' + list.map(function(item) { return '<li>' + esc(item.code || item) + '</li>'; }).join('') + '</ul>' : emptyState('Sin alertas operativas')) + '</section>';
+  }
+
+  function pct(value) {
+    return value === null || value === undefined || value === '' ? '-' : Math.round(Number(value) * 10) / 10 + '%';
+  }
+
+  function renderReportTable(players) {
+    if (!players.length) return emptyState('Sin datos de reporte');
+    var headers = ['Jugador','Liga','Nivel','Posicion','Cumplimiento','Presencia real','A','R','FJ','FI','LES','Partidos registrados','Titular','Suplente','Minutos','Goles','Amarillas','Rojas','Calificacion promedio'];
+    return '<div class="table-wrap"><table id="app-reports-table"><thead><tr>' + headers.map(function(header) { return '<th>' + esc(header) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+      players.map(function(player) {
+        return '<tr><td>' + esc(player.nombre) + '</td><td>' + esc(player.competencia) + '</td><td>' + esc(player.nivel) + '</td><td>' + esc(player.posicionPrincipal) + '</td><td>' + esc(pct(player.compliancePercentage)) + '</td><td>' + esc(pct(player.physicalPresencePercentage)) + '</td><td>' + esc(valueOrDash(player.attendanceCount)) + '</td><td>' + esc(valueOrDash(player.lateCount)) + '</td><td>' + esc(valueOrDash(player.justifiedAbsenceCount)) + '</td><td>' + esc(valueOrDash(player.unjustifiedAbsenceCount)) + '</td><td>' + esc(valueOrDash(player.injuryCount)) + '</td><td>' + esc(valueOrDash(player.participationRecords)) + '</td><td>' + esc(valueOrDash(player.starts)) + '</td><td>' + esc(valueOrDash(player.substituteStarts)) + '</td><td>' + esc(valueOrDash(player.minutes)) + '</td><td>' + esc(valueOrDash(player.goals)) + '</td><td>' + esc(valueOrDash(player.yellowCards)) + '</td><td>' + esc(valueOrDash(player.redCards)) + '</td><td>' + esc(valueOrDash(player.averageRating)) + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+
+  function renderCommunications() {
+    var model = state.communications || { rows: [], runtimeCapabilities: {} };
+    var rows = filteredCommunications(model.rows || []);
+    var pending = rows.filter(function(row) { return row.estado === 'PENDIENTE'; }).length;
+    var sent = rows.filter(function(row) { return row.estado === 'ENVIADO'; }).length;
+    var errors = rows.filter(function(row) { return row.estado === 'ERROR'; }).length;
+    var uncertain = rows.filter(function(row) { return row.uncertainDelivery; }).length;
+    var mailEnabled = model.runtimeCapabilities && model.runtimeCapabilities.externalMailEnabled === true;
+    return '<section class="screen communications-screen">' + (!mailEnabled ? '<div class="callout">Envio externo deshabilitado</div>' : '') +
+      '<div class="kpi-grid kpi-grid--compact">' + kpi('Pendientes', pending) + kpi('Enviados', sent) + kpi('Errores', errors) + kpi('Entrega incierta', uncertain) + '</div>' +
+      renderCommunicationFilters() + '<div class="toolbar"><button class="primary" data-action="communications-send-pending"' + (!mailEnabled || state.communicationWritePending ? ' disabled' : '') + '>Enviar pendientes</button></div>' + renderCommunicationTable(rows, mailEnabled) + '</section>';
+  }
+
+  function filteredCommunications(rows) {
+    var filters = state.communicationFilters || {};
+    return rows.filter(function(row) {
+      var search = String(filters.search || '').toLowerCase();
+      if (!competitionMatches(row.competencia)) return false;
+      if (filters.type && filters.type !== 'ALL' && row.tipo !== filters.type) return false;
+      if (filters.status && filters.status !== 'ALL' && row.estado !== filters.status) return false;
+      if (search && [row.nombreAlumno, row.referenciaId].join(' ').toLowerCase().indexOf(search) === -1) return false;
+      return true;
+    });
+  }
+
+  function renderCommunicationFilters() {
+    var filters = state.communicationFilters || {};
+    return '<div class="filters"><input data-communication-filter="search" placeholder="Buscar alumno o referencia" value="' + esc(filters.search || '') + '">' +
+      '<select data-communication-filter="type">' + optionTags([['ALL', 'Todos'], ['AUSENCIA', 'Ausencia'], ['CONVOCATORIA', 'Convocatoria']], filters.type || 'ALL') + '</select>' +
+      '<select data-communication-filter="status">' + optionTags([['ALL', 'Todos'], ['PENDIENTE', 'Pendiente'], ['ENVIADO', 'Enviado'], ['ERROR', 'Error']], filters.status || 'ALL') + '</select></div>';
+  }
+
+  function renderCommunicationTable(rows, mailEnabled) {
+    if (!rows.length) return emptyState('Sin comunicaciones');
+    return '<div class="table-wrap"><table id="app-communications-table"><thead><tr><th>Alumno</th><th>Liga</th><th>Tipo</th><th>Referencia</th><th>Creado</th><th>Enviado</th><th>Estado</th><th>Intentos</th><th>Resultado</th><th>Accion</th></tr></thead><tbody>' +
+      rows.map(function(row) {
+        var canRetry = mailEnabled && row.canRetry === true;
+        return '<tr><td>' + esc(row.nombreAlumno) + '</td><td>' + esc(valueOrDash(row.competencia)) + '</td><td>' + esc(valueOrDash(row.tipo)) + '</td><td>' + esc(valueOrDash(row.referenciaId)) + '</td><td>' + esc(valueOrDash(row.creadoEn)) + '</td><td>' + esc(valueOrDash(row.enviadoEn)) + '</td><td>' + badge(statusLabel(row.estado), 'state') + '</td><td>' + esc(valueOrDash(row.intentos)) + '</td><td>' + esc(row.uncertainDelivery ? 'Entrega por verificar' : valueOrDash(row.errorCode || row.estado)) + '</td><td><button data-action="communication-retry" data-communication-id="' + esc(row.communicationId) + '"' + (canRetry ? '' : ' disabled') + '>Reintentar</button></td></tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+
+  function renderConfiguration() {
+    var config = state.configuration || { entries: [], runtimeCapabilities: {} };
+    var entries = config.entries || [];
+    var groups = {};
+    entries.forEach(function(entry) {
+      var list = groups[entry.group] || [];
+      list.push(entry);
+      groups[entry.group] = list;
+    });
+    return '<section class="screen config-screen"><div class="callout">Configuracion operativa - solo lectura durante el piloto</div>' +
+      '<div class="kpi-grid kpi-grid--compact">' + kpi('Estado', config.ready ? 'Configuracion valida' : 'Error de configuracion') + kpi('Total de claves runtime', entries.length) + kpi('External mail', config.runtimeCapabilities && config.runtimeCapabilities.externalMailEnabled === true ? 'Habilitado' : 'Deshabilitado') + '</div>' +
+      (entries.length ? Object.keys(groups).map(function(group) { return renderConfigGroup(group, groups[group]); }).join('') : emptyState('Sin configuracion disponible')) + '</section>';
+  }
+
+  function renderConfigGroup(group, entries) {
+    return '<section class="panel"><h3>' + esc(group) + '</h3><div class="table-wrap"><table class="app-config-table"><thead><tr><th>Configuracion</th><th>Valor actual</th><th>Tipo</th><th>Unidad</th><th>Estado</th><th>Descripcion</th><th>Ultima modificacion</th></tr></thead><tbody>' +
+      entries.map(function(entry) {
+        var value = typeof entry.value === 'boolean' ? (entry.value ? 'Si' : 'No') : valueOrDash(entry.value);
+        return '<tr><td>' + esc(entry.key) + '</td><td>' + esc(value) + '</td><td>' + esc(valueOrDash(entry.type)) + '</td><td>' + esc(valueOrDash(entry.unit)) + '</td><td>' + esc(entry.active === true ? 'Activa' : 'Inactiva') + '</td><td>' + esc(valueOrDash(entry.description)) + '</td><td>' + esc(valueOrDash(entry.modifiedAt)) + '</td></tr>';
+      }).join('') + '</tbody></table></div></section>';
+  }
+
+  function formPayload(root, selector) {
+    var payload = {};
+    if (!root || !root.querySelectorAll) return payload;
+    Array.prototype.slice.call(root.querySelectorAll(selector + ' [name]')).forEach(function(input) {
+      payload[input.name] = input.value;
+    });
+    return payload;
+  }
+
+  function participationPayload(root, studentId) {
+    var payload = {};
+    if (!root || !root.querySelectorAll) return payload;
+    Array.prototype.slice.call(root.querySelectorAll('[data-participation-field][data-student-id="' + studentId + '"]')).forEach(function(input) {
+      payload[input.getAttribute('data-participation-field')] = input.value;
+    });
+    return payload;
   }
 
   function emptyState(message) {
@@ -381,7 +669,12 @@ function createAppRenderer(dependencies) {
     if (routeName === 'students') return renderStudents();
     if (routeName === 'attendance') return renderAttendance();
     if (routeName === 'convocations') return renderConvocations();
-    return renderScaffold();
+    if (routeName === 'matches') return renderMatches();
+    if (routeName === 'postmatch') return renderPostMatch();
+    if (routeName === 'reports') return renderReports();
+    if (routeName === 'communications') return renderCommunications();
+    if (routeName === 'config') return renderConfiguration();
+    return emptyState('Ruta no disponible');
   }
 
   function render(routeName) {
@@ -434,6 +727,18 @@ function createAppRenderer(dependencies) {
       }
       if (action === 'communication-prepare') controller.prepareConvocationCommunications(button.getAttribute('data-convocation-id'));
       if (action === 'communication-send') controller.sendPendingCommunications();
+      if (action === 'match-create') controller.createMatch(formPayload(target, '[data-form="match-create"]'));
+      if (action === 'match-update') controller.updateMatch(button.getAttribute('data-match-id'), formPayload(target, '[data-form="match-create"]'));
+      if (action === 'match-mark-played') {
+        controller.markMatchPlayed(button.getAttribute('data-match-id'), {
+          golesFavor: (target.querySelector('[data-score-for="' + button.getAttribute('data-match-id') + '"]') || {}).value,
+          golesContra: (target.querySelector('[data-score-against="' + button.getAttribute('data-match-id') + '"]') || {}).value
+        });
+      }
+      if (action === 'match-cancel') controller.cancelMatch(button.getAttribute('data-match-id'));
+      if (action === 'participation-save') controller.saveParticipation(button.getAttribute('data-match-id'), button.getAttribute('data-student-id'), participationPayload(target, button.getAttribute('data-student-id')));
+      if (action === 'communications-send-pending') controller.sendPendingCommunications();
+      if (action === 'communication-retry') controller.retryCommunication(button.getAttribute('data-communication-id'));
     });
     target.addEventListener('change', function(event) {
       var element = event.target;
@@ -444,6 +749,9 @@ function createAppRenderer(dependencies) {
       if (element.id === 'app-convocation-match') {
         controllerMethod('selectProgrammedMatch')(element.value);
       }
+      if (element.id === 'app-postmatch-match') {
+        controllerMethod('selectPlayedMatch')(element.value);
+      }
       if (element.getAttribute('data-filter')) {
         state.studentFilters = state.studentFilters || {};
         state.studentFilters[element.getAttribute('data-filter')] = element.value;
@@ -453,6 +761,21 @@ function createAppRenderer(dependencies) {
         state.convocationFilters = state.convocationFilters || {};
         state.convocationFilters[element.getAttribute('data-convocation-filter')] = element.value;
         render('convocations');
+      }
+      if (element.getAttribute('data-match-filter')) {
+        state.matchFilters = state.matchFilters || {};
+        state.matchFilters[element.getAttribute('data-match-filter')] = element.value;
+        render('matches');
+      }
+      if (element.getAttribute('data-report-filter')) {
+        state.reportFilters = state.reportFilters || {};
+        state.reportFilters[element.getAttribute('data-report-filter')] = element.value;
+        render('reports');
+      }
+      if (element.getAttribute('data-communication-filter')) {
+        state.communicationFilters = state.communicationFilters || {};
+        state.communicationFilters[element.getAttribute('data-communication-filter')] = element.value;
+        render('communications');
       }
       if (element.getAttribute('data-action') === 'convocation-selection') {
         var reason = target.querySelector('.convocation-reason[data-student-id="' + element.getAttribute('data-student-id') + '"]');
@@ -475,6 +798,21 @@ function createAppRenderer(dependencies) {
         state.convocationFilters[element.getAttribute('data-convocation-filter')] = element.value;
         render('convocations');
       }
+      if (element.getAttribute && element.getAttribute('data-match-filter')) {
+        state.matchFilters = state.matchFilters || {};
+        state.matchFilters[element.getAttribute('data-match-filter')] = element.value;
+        render('matches');
+      }
+      if (element.getAttribute && element.getAttribute('data-report-filter')) {
+        state.reportFilters = state.reportFilters || {};
+        state.reportFilters[element.getAttribute('data-report-filter')] = element.value;
+        render('reports');
+      }
+      if (element.getAttribute && element.getAttribute('data-communication-filter')) {
+        state.communicationFilters = state.communicationFilters || {};
+        state.communicationFilters[element.getAttribute('data-communication-filter')] = element.value;
+        render('communications');
+      }
     });
   }
 
@@ -488,7 +826,12 @@ function createAppRenderer(dependencies) {
     renderConvocations: renderConvocations,
     renderConvocationFilters: renderConvocationFilters,
     renderDashboard: renderDashboard,
+    renderCommunications: renderCommunications,
+    renderConfiguration: renderConfiguration,
+    renderMatches: renderMatches,
     renderNavigation: renderNavigation,
+    renderPostMatch: renderPostMatch,
+    renderReports: renderReports,
     renderShell: renderShell,
     renderStudents: renderStudents
   };
