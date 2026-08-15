@@ -393,6 +393,12 @@ function createAppClientController(dependencies) {
       state.loading = false;
       return null;
     }
+    rpc('getAppConfiguration', [], function(data) {
+      state.configuration = data || { entries: [] };
+      if (typeof render.route === 'function') render.route('postmatch');
+    }, {
+      isCurrent: function() { return isFresh(token, 'postmatch') && state.selectedPlayedMatchId === selected; }
+    });
     return rpc('getPanelParticipation', [selected], function(data) {
       state.postMatch = data || { matchId: selected, rows: [] };
       state.loading = false;
@@ -479,6 +485,7 @@ function createAppClientController(dependencies) {
     if (state.matchWritePending) return null;
     state.matchWritePending = true;
     return rpc('commandUpdateMatch', [matchId, updates || {}, actor], function() {
+      state.editingMatchId = '';
       if (originRoute === 'matches' && state.activeRoute === 'matches') loadBootstrap('matches');
     }, {
       isCurrent: function() { return originRoute === 'matches' && state.activeRoute === 'matches' && originMatchId === matchId; },
@@ -669,6 +676,8 @@ function createAppClientController(dependencies) {
   function sendPendingCommunications() {
     var capabilities = (state.communications && state.communications.runtimeCapabilities) || (state.referenceData && state.referenceData.runtimeCapabilities) || {};
     var originRoute = state.activeRoute;
+    var originMatchId = state.selectedProgrammedMatchId || '';
+    var originConvocationId = state.selectedConvocationId || convocationId(findConvocationForMatch(originMatchId)) || '';
     if (capabilities.externalMailEnabled !== true) {
       throw new Error('PANEL_CLIENT_MAIL_DISABLED');
     }
@@ -676,8 +685,20 @@ function createAppClientController(dependencies) {
     state.communicationWritePending = true;
     return rpc('commandSendPendingCommunications', [], function() {
       if (originRoute === 'communications' && state.activeRoute === 'communications') loadBootstrap('communications');
+      if (originRoute === 'convocations' &&
+          state.activeRoute === 'convocations' &&
+          state.selectedProgrammedMatchId === originMatchId &&
+          (state.selectedConvocationId === originConvocationId || isCanonicalConvocationForMatch(originConvocationId, originMatchId))) {
+        loadBootstrap('convocations');
+      }
     }, {
-      isCurrent: function() { return originRoute === 'communications' && state.activeRoute === 'communications'; },
+      isCurrent: function() {
+        if (originRoute === 'communications') return state.activeRoute === 'communications';
+        return originRoute === 'convocations' &&
+          state.activeRoute === 'convocations' &&
+          state.selectedProgrammedMatchId === originMatchId &&
+          (state.selectedConvocationId === originConvocationId || isCanonicalConvocationForMatch(originConvocationId, originMatchId));
+      },
       onSettled: function() { state.communicationWritePending = false; }
     });
   }

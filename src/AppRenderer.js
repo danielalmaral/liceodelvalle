@@ -26,6 +26,10 @@ function createAppRenderer(dependencies) {
     return value === undefined || value === null || value === '' ? '-' : value;
   }
 
+  function valueOrEmpty(value) {
+    return value === undefined || value === null || value === '' || value === '-' ? '' : value;
+  }
+
   function pairOrDash(left, right) {
     return valueOrDash(left) + ' / ' + valueOrDash(right);
   }
@@ -404,8 +408,14 @@ function createAppRenderer(dependencies) {
       '</div>' + renderMatchFilters() + renderMatchCreateForm() + renderMatchesTable(matches) + '</section>';
   }
 
+  function matchChronology(left, right) {
+    return String(left.fecha || '').localeCompare(String(right.fecha || '')) ||
+      String(left.horaPartido || '').localeCompare(String(right.horaPartido || '')) ||
+      String(left.partidoId || '').localeCompare(String(right.partidoId || ''));
+  }
+
   function nextMatchLabel(matches, competition) {
-    var match = matches.filter(function(item) { return item.competencia === competition; })[0] || null;
+    var match = matches.filter(function(item) { return item.competencia === competition; }).sort(matchChronology)[0] || null;
     return match ? [match.rival, match.fecha].filter(Boolean).join(' | ') : '-';
   }
 
@@ -450,7 +460,18 @@ function createAppRenderer(dependencies) {
 
   function renderMatchActions(match) {
     if (match.estado !== 'PROGRAMADO') return '<span class="muted">Solo lectura</span>';
-    return '<button data-action="match-update" data-match-id="' + esc(match.partidoId) + '">Editar</button> <input class="score-input" data-score-for="' + esc(match.partidoId) + '" type="number" min="0" placeholder="GF"><input class="score-input" data-score-against="' + esc(match.partidoId) + '" type="number" min="0" placeholder="GC"><button data-action="match-mark-played" data-match-id="' + esc(match.partidoId) + '">Marcar como jugado</button> <button data-action="match-cancel" data-match-id="' + esc(match.partidoId) + '">Cancelar partido</button>';
+    return '<button data-action="match-edit-start" data-match-id="' + esc(match.partidoId) + '">Editar</button> <input class="score-input" data-score-for="' + esc(match.partidoId) + '" type="number" min="0" placeholder="GF"><input class="score-input" data-score-against="' + esc(match.partidoId) + '" type="number" min="0" placeholder="GC"><button data-action="match-mark-played" data-match-id="' + esc(match.partidoId) + '">Marcar como jugado</button> <button data-action="match-cancel" data-match-id="' + esc(match.partidoId) + '">Cancelar partido</button>' + (state.editingMatchId === match.partidoId ? renderMatchEditForm(match) : '');
+  }
+
+  function renderMatchEditForm(match) {
+    return '<div class="form-grid match-edit-form" data-form="match-edit" data-match-id="' + esc(match.partidoId) + '">' +
+      '<label>Competencia<select name="COMPETENCIA">' + optionTags([['A', 'Liga A'], ['B', 'Liga B']], match.competencia || '') + '</select></label>' +
+      '<label>Jornada<input name="JORNADA" value="' + esc(match.jornada || '') + '"></label><label>Rival<input name="RIVAL" value="' + esc(match.rival || '') + '"></label><label>Fecha<input name="FECHA" type="date" value="' + esc(match.fecha || '') + '"></label>' +
+      '<label>Hora de citacion<input name="HORA_CITACION" type="time" value="' + esc(match.horaCitacion || '') + '"></label><label>Hora del partido<input name="HORA_PARTIDO" type="time" value="' + esc(match.horaPartido || '') + '"></label>' +
+      '<label>Sede<input name="SEDE" value="' + esc(match.sede || '') + '"></label><label>Local / Visitante<select name="LOCAL_VISITANTE">' + optionTags([['LOCAL', 'Local'], ['VISITANTE', 'Visitante']], match.localVisitante || '') + '</select></label>' +
+      '<label>Duracion en minutos<input name="DURACION_MINUTOS" type="number" min="1" value="' + esc(valueOrEmpty(match.duracionMinutos)) + '"></label><label>Uniforme<input name="UNIFORME" value="' + esc(match.uniforme || '') + '"></label>' +
+      '<label>Indicaciones<input name="INDICACIONES" value="' + esc(match.indicaciones || '') + '"></label><label>Observaciones<input name="OBSERVACIONES" value="' + esc(match.observaciones || '') + '"></label>' +
+      '<button class="primary" data-action="match-update" data-match-id="' + esc(match.partidoId) + '"' + (state.matchWritePending ? ' disabled' : '') + '>Guardar cambios</button></div>';
   }
 
   function playedMatches() {
@@ -483,17 +504,17 @@ function createAppRenderer(dependencies) {
     var attended = rows.filter(function(row) { return row.ASISTIO_DERIVADO === true; }).length;
     var absent = rows.filter(function(row) { return row.ASISTIO_DERIVADO === false; }).length;
     var registered = rows.filter(function(row) { return row.PARTICIPACION_ID; }).length;
-    var issueCount = ((view.issues || []).length + (((view.readiness || {}).errors || []).length));
+    var issueCount = ((view.issues || []).length + (((view.readiness || {}).errors || []).length) + (((view.readiness || {}).alerts || []).length));
     return '<div class="kpi-grid kpi-grid--five">' +
       kpi('Partido', match && [match.competencia, match.jornada, match.rival].filter(Boolean).join(' | '), match && [match.fecha, scoreLabel(match), match.duracionMinutos].filter(Boolean).join(' | ')) +
       kpi('Convocados en vista', rows.length) + kpi('Con asistencia', attended) + kpi('Ausentes', absent) + kpi('Participaciones registradas', registered + ' / alertas ' + issueCount) + '</div>';
   }
 
   function renderReadiness(view) {
-    var items = (view.issues || []).concat(((view.readiness || {}).errors || []).map(function(code) { return { code: code }; }), ((view.readiness || {}).alerts || []).map(function(code) { return { code: code }; }));
+    var items = (view.issues || []).concat(((view.readiness || {}).errors || []).map(function(item) { return typeof item === 'string' ? { code: item } : item; }), ((view.readiness || {}).alerts || []).map(function(item) { return typeof item === 'string' ? { code: item } : item; }));
     if (!items.length) return '';
     return '<div class="callouts">' + items.map(function(item) {
-      var code = item.code || item;
+      var code = item && (item.code || item.CODE) || item;
       var label = code === 'PANEL_POSTMATCH_ATTENDANCE_REQUIRED' ? 'Falta registrar asistencia del partido' : code;
       return '<div class="callout">' + esc(label) + '</div>';
     }).join('') + '</div>';
@@ -514,18 +535,19 @@ function createAppRenderer(dependencies) {
 
   function renderPostMatchRow(row, match) {
     var attended = row.ASISTIO_DERIVADO === true;
+    var attendanceLabel = row.ASISTIO_DERIVADO === undefined || row.ASISTIO_DERIVADO === null ? '-' : (attended ? 'Si' : 'No');
     var missing = !row.ASISTENCIA_ESTADO;
     var locked = !attended || missing;
     var rating = ratingConfig();
     var disabled = locked || (state.participationWriteByStudent && state.participationWriteByStudent[row.ALUMNO_ID]);
-    return '<tr><td>' + esc(row.nombre) + '</td><td>' + badge(row.ASISTENCIA_ESTADO || 'Pendiente', 'state') + '</td><td>' + esc(attended ? 'Si' : 'No') + '</td>' +
+    return '<tr><td>' + esc(row.nombre) + '</td><td>' + badge(row.ASISTENCIA_ESTADO || 'Pendiente', 'state') + '</td><td>' + esc(attendanceLabel) + '</td>' +
       '<td><select data-participation-field="CONDICION_INICIAL" data-student-id="' + esc(row.ALUMNO_ID) + '"' + (disabled ? ' disabled' : '') + '>' + optionTags([['', 'Seleccionar'], ['TITULAR', 'Titular'], ['SUPLENTE', 'Suplente']], attended ? row.CONDICION_INICIAL : '') + '</select></td>' +
-      '<td><input data-participation-field="MINUTOS_JUGADOS" data-student-id="' + esc(row.ALUMNO_ID) + '" type="number" min="0" max="' + esc(match && match.duracionMinutos) + '" value="' + esc(attended ? valueOrDash(row.MINUTOS_JUGADOS) : 0) + '"' + (disabled ? ' disabled' : '') + '></td>' +
-      '<td><input data-participation-field="GOLES" data-student-id="' + esc(row.ALUMNO_ID) + '" type="number" min="0" value="' + esc(attended ? valueOrDash(row.GOLES) : 0) + '"' + (disabled ? ' disabled' : '') + '></td>' +
-      '<td><input data-participation-field="AMARILLAS" data-student-id="' + esc(row.ALUMNO_ID) + '" type="number" min="0" value="' + esc(attended ? valueOrDash(row.AMARILLAS) : 0) + '"' + (disabled ? ' disabled' : '') + '></td>' +
-      '<td><input data-participation-field="ROJAS" data-student-id="' + esc(row.ALUMNO_ID) + '" type="number" min="0" value="' + esc(attended ? valueOrDash(row.ROJAS) : 0) + '"' + (disabled ? ' disabled' : '') + '></td>' +
-      '<td><input data-participation-field="CALIFICACION" data-student-id="' + esc(row.ALUMNO_ID) + '" type="number" min="' + esc(valueOrDash(rating.min)) + '" max="' + esc(valueOrDash(rating.max)) + '" step="' + (rating.decimals ? '0.1' : '1') + '" value="' + esc(attended ? valueOrDash(row.CALIFICACION) : '') + '"' + (disabled ? ' disabled' : '') + '></td>' +
-      '<td><input data-participation-field="OBSERVACIONES" data-student-id="' + esc(row.ALUMNO_ID) + '" value=""' + (disabled ? ' disabled' : '') + '></td><td>' + esc(row.PARTICIPACION_ID ? 'Registrado' : (missing ? 'Falta registrar asistencia del partido' : 'Pendiente')) + '</td><td><button data-action="participation-save" data-match-id="' + esc(match && match.partidoId) + '" data-student-id="' + esc(row.ALUMNO_ID) + '"' + (disabled ? ' disabled' : '') + '>Guardar</button></td></tr>';
+      '<td><input data-participation-field="MINUTOS_JUGADOS" data-student-id="' + esc(row.ALUMNO_ID) + '" type="number" min="0" max="' + esc(match && match.duracionMinutos) + '" value="' + esc(attended ? valueOrEmpty(row.MINUTOS_JUGADOS) : '') + '"' + (disabled ? ' disabled' : '') + '></td>' +
+      '<td><input data-participation-field="GOLES" data-student-id="' + esc(row.ALUMNO_ID) + '" type="number" min="0" value="' + esc(attended ? valueOrEmpty(row.GOLES) : '') + '"' + (disabled ? ' disabled' : '') + '></td>' +
+      '<td><input data-participation-field="AMARILLAS" data-student-id="' + esc(row.ALUMNO_ID) + '" type="number" min="0" value="' + esc(attended ? valueOrEmpty(row.AMARILLAS) : '') + '"' + (disabled ? ' disabled' : '') + '></td>' +
+      '<td><input data-participation-field="ROJAS" data-student-id="' + esc(row.ALUMNO_ID) + '" type="number" min="0" value="' + esc(attended ? valueOrEmpty(row.ROJAS) : '') + '"' + (disabled ? ' disabled' : '') + '></td>' +
+      '<td><input data-participation-field="CALIFICACION" data-student-id="' + esc(row.ALUMNO_ID) + '" type="number" min="' + esc(valueOrEmpty(rating.min)) + '" max="' + esc(valueOrEmpty(rating.max)) + '" step="' + (rating.decimals ? '0.1' : '1') + '" value="' + esc(attended ? valueOrEmpty(row.CALIFICACION) : '') + '"' + (disabled ? ' disabled' : '') + '></td>' +
+      '<td><input data-participation-field="OBSERVACIONES" data-student-id="' + esc(row.ALUMNO_ID) + '" value="' + esc(row.OBSERVACIONES || '') + '"' + (disabled ? ' disabled' : '') + '></td><td>' + esc(row.PARTICIPACION_ID ? 'Registrado' : (missing ? 'Falta registrar asistencia del partido' : 'Pendiente')) + '</td><td><button data-action="participation-save" data-match-id="' + esc(match && match.partidoId) + '" data-student-id="' + esc(row.ALUMNO_ID) + '"' + (disabled ? ' disabled' : '') + '>Guardar</button></td></tr>';
   }
 
   function renderReports() {
@@ -547,6 +569,7 @@ function createAppRenderer(dependencies) {
     return players.filter(function(player) {
       var search = String(filters.search || '').toLowerCase();
       if (!competitionMatches(player.competencia)) return false;
+      if (filters.competition && filters.competition !== 'ALL' && player.competencia !== filters.competition) return false;
       if (search && String(player.nombre || '').toLowerCase().indexOf(search) === -1) return false;
       if (filters.level && filters.level !== 'ALL' && player.nivel !== filters.level) return false;
       if (filters.position && filters.position !== 'ALL' && player.posicionPrincipal !== filters.position) return false;
@@ -557,12 +580,15 @@ function createAppRenderer(dependencies) {
   function renderReportFilters() {
     var filters = state.reportFilters || {};
     return '<div class="filters"><input data-report-filter="search" placeholder="Buscar jugador" value="' + esc(filters.search || '') + '">' +
+      '<select data-report-filter="competition">' + optionTags([['ALL', 'Todas'], ['A', 'Liga A'], ['B', 'Liga B']], filters.competition || 'ALL') + '</select>' +
       '<select data-report-filter="level">' + optionTags([['ALL', 'Todos'], ['A1', 'A1'], ['A2', 'A2'], ['B1', 'B1'], ['B2', 'B2']], filters.level || 'ALL') + '</select>' +
       '<select data-report-filter="position">' + optionTags([['ALL', 'Todas'], ['PO', 'PO'], ['DEF', 'DEF'], ['MED', 'MED'], ['DEL', 'DEL']], filters.position || 'ALL') + '</select></div>';
   }
 
   function renderReportAlerts(alerts) {
-    var list = (alerts.sportAlerts || []).concat(alerts.readinessIssues || []);
+    var list = (alerts.sportAlerts || []).concat(alerts.readinessIssues || []).filter(function(item) {
+      return competitionMatches(item && item.competencia);
+    });
     return '<section class="panel panel--wide"><h3>Alertas</h3>' + (list.length ? '<ul class="alert-list">' + list.map(function(item) { return '<li>' + esc(item.code || item) + '</li>'; }).join('') + '</ul>' : emptyState('Sin alertas operativas')) + '</section>';
   }
 
@@ -728,7 +754,11 @@ function createAppRenderer(dependencies) {
       if (action === 'communication-prepare') controller.prepareConvocationCommunications(button.getAttribute('data-convocation-id'));
       if (action === 'communication-send') controller.sendPendingCommunications();
       if (action === 'match-create') controller.createMatch(formPayload(target, '[data-form="match-create"]'));
-      if (action === 'match-update') controller.updateMatch(button.getAttribute('data-match-id'), formPayload(target, '[data-form="match-create"]'));
+      if (action === 'match-edit-start') {
+        state.editingMatchId = button.getAttribute('data-match-id');
+        render('matches');
+      }
+      if (action === 'match-update') controller.updateMatch(button.getAttribute('data-match-id'), formPayload(target, '[data-form="match-edit"][data-match-id="' + button.getAttribute('data-match-id') + '"]'));
       if (action === 'match-mark-played') {
         controller.markMatchPlayed(button.getAttribute('data-match-id'), {
           golesFavor: (target.querySelector('[data-score-for="' + button.getAttribute('data-match-id') + '"]') || {}).value,

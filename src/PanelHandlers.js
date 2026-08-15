@@ -104,7 +104,28 @@ function getPanelConvocation(convocationId) {
 }
 
 function getPanelParticipation(matchId) {
-  return safePanelResponse(function() { return panelRuntime().queries.getPanelParticipation(matchId); });
+  return safePanelResponse(function() {
+    var runtime = panelRuntime();
+    var view = runtime.queries.getPanelParticipation(matchId);
+    var existingByStudent = {};
+    if (runtime.queries && typeof runtime.queries.getParticipations === 'function') {
+      runtime.queries.getParticipations().filter(function(row) {
+        return row.PARTIDO_ID === matchId || row.partidoId === matchId;
+      }).forEach(function(row) {
+        existingByStudent[row.ALUMNO_ID || row.alumnoId] = row;
+      });
+    }
+    return Object.assign({}, view, {
+      rows: (view.rows || []).map(function(row) {
+        var existing = existingByStudent[row.ALUMNO_ID] || {};
+        return Object.assign({}, row, {
+          OBSERVACIONES: row.OBSERVACIONES !== undefined && row.OBSERVACIONES !== null
+            ? row.OBSERVACIONES
+            : (existing.OBSERVACIONES || '')
+        });
+      })
+    });
+  });
 }
 
 function getPanelReferenceData() {
@@ -192,14 +213,22 @@ function getAppCommunications() {
     var students = runtime.queries.getStudents();
     var names = appStudentNameMap(students);
     var studentsById = appStudentById(students);
+    var reference = runtime.queries.getPanelReferenceData ? runtime.queries.getPanelReferenceData() : {};
     var matchesById = {};
     runtime.queries.getMatches().forEach(function(match) {
       matchesById[match.partidoId] = match;
     });
+    var convocationMatchById = {};
+    ((reference.convocationProposals || []).concat(reference.authoritativeConvocations || [])).forEach(function(item) {
+      var convocationId = item.CONVOCATORIA_ID || item.convocationId;
+      var matchId = item.PARTIDO_ID || item.partidoId || item.matchId;
+      if (convocationId && matchId) convocationMatchById[convocationId] = matchId;
+    });
     return {
       runtimeCapabilities: runtime.queries.getRuntimeCapabilities(),
       rows: runtime.queries.getCommunications().map(function(row) {
-        var match = matchesById[row.REFERENCIA_ID] || {};
+        var matchId = row.TIPO === 'CONVOCATORIA' ? convocationMatchById[row.REFERENCIA_ID] : row.REFERENCIA_ID;
+        var match = matchesById[matchId] || {};
         var student = studentsById[row.ALUMNO_ID] || {};
         var errorCode = appCommunicationsErrorCode(row.ERROR);
         return {
@@ -253,8 +282,14 @@ function getAppReports() {
     var participationByStudent = {};
     var dashboard = runtime.queries.getPanelDashboard();
     var summary = { A: emptyTeamSummary(), B: emptyTeamSummary() };
+    var studentsById = appStudentById(students);
+    var matchesById = {};
 
-    runtime.queries.getMatches().filter(function(match) { return match.estado === 'JUGADO'; }).forEach(function(match) {
+    runtime.queries.getMatches().forEach(function(match) {
+      matchesById[match.partidoId] = match;
+    });
+
+    Object.keys(matchesById).map(function(key) { return matchesById[key]; }).filter(function(match) { return match.estado === 'JUGADO'; }).forEach(function(match) {
       var bucket = summary[match.competencia];
       if (!bucket) return;
       var favor = Number(match.golesFavor);
@@ -309,9 +344,25 @@ function getAppReports() {
         };
       }),
       alerts: {
-        sportAlerts: dashboard.sportAlerts || [],
-        readinessIssues: dashboard.readinessIssues || []
+        sportAlerts: enrichReportAlerts(dashboard.sportAlerts || [], matchesById, studentsById),
+        readinessIssues: enrichReportAlerts(dashboard.readinessIssues || [], matchesById, studentsById)
       }
+    };
+  });
+}
+
+function enrichReportAlerts(alerts, matchesById, studentsById) {
+  return (alerts || []).map(function(item) {
+    var source = typeof item === 'string' ? { code: item } : (item || {});
+    var matchId = source.matchId || source.PARTIDO_ID || source.partidoId || '';
+    var studentId = source.studentId || source.ALUMNO_ID || source.alumnoId || '';
+    var match = matchesById[matchId] || {};
+    var student = studentsById[studentId] || {};
+    return {
+      code: source.code || source.CODE || source,
+      matchId: matchId,
+      studentId: studentId,
+      competencia: source.competencia || match.competencia || student.competenciaBase || ''
     };
   });
 }
