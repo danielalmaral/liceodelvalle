@@ -105,11 +105,19 @@ function auditedCommandState(overrides = {}) {
   const participationRows = [{ PARTICIPACION_ID: 'PRT-001', MINUTOS_JUGADOS: 0 }];
   const communicationRows = [{ COMUNICACION_ID: 'COM-001', ESTADO: 'ERROR' }];
   const auditRows = [];
+  let absenceWriteCount = 0;
+  let approvalWriteCount = 0;
+  let communicationSendCount = 0;
+  let createParticipationWriteCount = 0;
   let participationWriteCount = 0;
+  let positionWriteCount = 0;
+  let retrySendCount = 0;
+  let selectionWriteCount = 0;
   const auditRepository = overrides.auditRepository || createArrayRepository(auditRows);
   const services = {
     absenceResolutionService: {
       resolveAbsence(id, state) {
+        absenceWriteCount += 1;
         attendanceRows[0].ESTADO = state;
         return { attendance: attendanceRows[0] };
       },
@@ -120,21 +128,32 @@ function auditedCommandState(overrides = {}) {
     },
     auditService: createAuditService({ auditRepository, utils }),
     communicationService: {
-      sendPendingCommunications() { return [{ communication: { COMUNICACION_ID: 'COM-001', ESTADO: 'ENVIADO' } }]; },
-      retryCommunication() { return { communication: { COMUNICACION_ID: 'COM-001', ESTADO: 'ERROR' } }; }
+      sendPendingCommunications() { communicationSendCount += 1; return [{ communication: { COMUNICACION_ID: 'COM-001', ESTADO: 'ENVIADO' } }]; },
+      retryCommunication() { retrySendCount += 1; return { communication: { COMUNICACION_ID: 'COM-001', ESTADO: 'ERROR' } }; }
     },
     convocationService: {
-      approveConvocation() { return { CONVOCATORIA_ID: 'CON-001', ESTADO: 'APROBADA' }; },
-      assignPlayerPosition() { detailRows[0].POSICION_ASIGNADA = 'MED'; return detailRows[0]; },
-      setFinalSelection() { detailRows[0].SELECCIONADO_FINAL = false; return detailRows[0]; }
+      approveConvocation() { approvalWriteCount += 1; return { CONVOCATORIA_ID: 'CON-001', ESTADO: 'APROBADA' }; },
+      assignPlayerPosition() { positionWriteCount += 1; detailRows[0].POSICION_ASIGNADA = 'MED'; return detailRows[0]; },
+      setFinalSelection() { selectionWriteCount += 1; detailRows[0].SELECCIONADO_FINAL = false; return detailRows[0]; }
     },
     participationService: {
+      createParticipation(input) { createParticipationWriteCount += 1; participationRows.push(input); return input; },
       updateParticipation(id, updates) { participationWriteCount += 1; Object.assign(participationRows[0], updates); return participationRows[0]; }
     }
   };
   return {
     auditRows,
+    attendanceRows,
+    communicationRows,
+    detailRows,
+    getAbsenceWriteCount() { return absenceWriteCount; },
+    getApprovalWriteCount() { return approvalWriteCount; },
+    getCommunicationSendCount() { return communicationSendCount; },
+    getCreateParticipationWriteCount() { return createParticipationWriteCount; },
     getParticipationWriteCount() { return participationWriteCount; },
+    getPositionWriteCount() { return positionWriteCount; },
+    getRetrySendCount() { return retrySendCount; },
+    getSelectionWriteCount() { return selectionWriteCount; },
     participationRows,
     command: createOperationalCommandService({
       idGenerator: overrides.idGenerator || { operationId: (prefix) => `${prefix}-001` },
@@ -150,10 +169,14 @@ function auditedCommandState(overrides = {}) {
   };
 }
 
+function functionalEvents(rows) {
+  return rows.filter((row) => row.ENTIDAD !== 'OPERACION');
+}
+
 test('AUDIT_E2E_ABSENCE_FJ_TEST records audit through absence command', () => {
   const state = auditedCommandState();
   state.command.resolveAbsence('AST-001', 'FJ', { operationId: 'OP-FJ' });
-  assert.equal(state.auditRows[0].VALOR_NUEVO, 'FJ');
+  assert.equal(functionalEvents(state.auditRows)[0].VALOR_NUEVO, 'FJ');
 });
 
 test('OPERATION_ID_GENERATOR_REQUIRED_TEST requires durable operation id generator', () => {
@@ -171,49 +194,49 @@ test('OPERATION_ID_GENERATED_DISTINCT_TEST uses generator for distinct operation
 test('AUDIT_E2E_ABSENCE_FI_TEST records expired FI through command', () => {
   const state = auditedCommandState();
   state.command.resolveExpiredAbsences(new Date(), { operationId: 'OP-FI' });
-  assert.equal(state.auditRows[0].VALOR_NUEVO, 'FI');
+  assert.equal(functionalEvents(state.auditRows)[0].VALOR_NUEVO, 'FI');
 });
 
 test('AUDIT_E2E_ABSENCE_LES_TEST records LES through command', () => {
   const state = auditedCommandState();
   state.command.resolveAbsence('AST-001', 'LES', { operationId: 'OP-LES' });
-  assert.equal(state.auditRows[0].VALOR_NUEVO, 'LES');
+  assert.equal(functionalEvents(state.auditRows)[0].VALOR_NUEVO, 'LES');
 });
 
 test('AUDIT_E2E_CONVOCATION_SELECTION_TEST records selection command', () => {
   const state = auditedCommandState();
   state.command.setFinalSelection('CON-001', 'ALU-001', false, 'Decision', { operationId: 'OP-SEL' });
-  assert.equal(state.auditRows[0].CAMPO, 'SELECCIONADO_FINAL');
+  assert.equal(functionalEvents(state.auditRows)[0].CAMPO, 'SELECCIONADO_FINAL');
 });
 
 test('AUDIT_E2E_CONVOCATION_POSITION_TEST records position command', () => {
   const state = auditedCommandState();
   state.command.assignPlayerPosition('CON-001', 'ALU-001', 'MED', 'Decision', { operationId: 'OP-POS' });
-  assert.equal(state.auditRows[0].CAMPO, 'POSICION_ASIGNADA');
+  assert.equal(functionalEvents(state.auditRows)[0].CAMPO, 'POSICION_ASIGNADA');
 });
 
 test('AUDIT_E2E_CONVOCATION_APPROVAL_TEST records approval command', () => {
   const state = auditedCommandState();
   state.command.approveConvocation('CON-001', 'coach', { operationId: 'OP-APP' });
-  assert.equal(state.auditRows[0].ACCION, 'APROBACION');
+  assert.equal(functionalEvents(state.auditRows)[0].ACCION, 'APROBACION');
 });
 
 test('AUDIT_E2E_PARTICIPATION_UPDATE_TEST records participation update command', () => {
   const state = auditedCommandState();
   state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 30 }, { operationId: 'OP-PRT' });
-  assert.equal(state.auditRows[0].ENTIDAD, 'PARTICIPACION_PARTIDO');
+  assert.equal(functionalEvents(state.auditRows)[0].ENTIDAD, 'PARTICIPACION_PARTIDO');
 });
 
 test('AUDIT_E2E_COMMUNICATION_SENT_TEST records communication sent command', () => {
   const state = auditedCommandState();
   state.command.sendPendingCommunications({ operationId: 'OP-COM' });
-  assert.equal(state.auditRows[0].VALOR_NUEVO, 'ENVIADO');
+  assert.equal(functionalEvents(state.auditRows)[0].VALOR_NUEVO, 'ENVIADO');
 });
 
 test('AUDIT_E2E_COMMUNICATION_ERROR_TEST records communication retry command', () => {
   const state = auditedCommandState();
   state.command.retryCommunication('COM-001', { operationId: 'OP-COM-ERR' });
-  assert.equal(state.auditRows[0].VALOR_NUEVO, 'ERROR');
+  assert.equal(functionalEvents(state.auditRows)[0].VALOR_NUEVO, 'ERROR');
 });
 
 test('AUDIT_NO_EVENT_ON_DOMAIN_FAILURE_TEST does not append if command write fails', () => {
@@ -249,7 +272,7 @@ test('AUDIT_SAME_OPERATION_RETRY_IDEMPOTENT_TEST does not repeat domain write fo
   const state = auditedCommandState();
   state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 10 }, { operationId: 'OP-SAME' });
   state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 10 }, { operationId: 'OP-SAME' });
-  assert.equal(state.auditRows.length, 1);
+  assert.equal(functionalEvents(state.auditRows).length, 1);
   assert.equal(state.getParticipationWriteCount(), 1);
 });
 
@@ -268,18 +291,110 @@ test('OPERATION_ID_REPLAY_NO_SECOND_WRITE_TEST replays without a second domain w
   assert.equal(state.getParticipationWriteCount(), 1);
 });
 
+test('OPERATION_REPLAY_ABSENCE_NO_SECOND_WRITE_TEST replays absence without a second write', () => {
+  const state = auditedCommandState();
+  state.command.resolveAbsence('AST-001', 'FJ', { operationId: 'OP-ABS-REPLAY' });
+  const result = state.command.resolveAbsence('AST-001', 'FJ', { operationId: 'OP-ABS-REPLAY' });
+  assert.equal(result.idempotent, true);
+  assert.equal(state.getAbsenceWriteCount(), 1);
+});
+
+test('OPERATION_REPLAY_SELECTION_NO_SECOND_WRITE_TEST replays selection without a second write', () => {
+  const state = auditedCommandState();
+  state.command.setFinalSelection('CON-001', 'ALU-001', false, 'Decision', { operationId: 'OP-SEL-REPLAY' });
+  const result = state.command.setFinalSelection('CON-001', 'ALU-001', false, 'Decision', { operationId: 'OP-SEL-REPLAY' });
+  assert.equal(result.idempotent, true);
+  assert.equal(state.getSelectionWriteCount(), 1);
+});
+
+test('OPERATION_REPLAY_POSITION_NO_SECOND_WRITE_TEST replays position without a second write', () => {
+  const state = auditedCommandState();
+  state.command.assignPlayerPosition('CON-001', 'ALU-001', 'MED', 'Decision', { operationId: 'OP-POS-REPLAY' });
+  const result = state.command.assignPlayerPosition('CON-001', 'ALU-001', ' med ', 'Decision', { operationId: 'OP-POS-REPLAY' });
+  assert.equal(result.idempotent, true);
+  assert.equal(state.getPositionWriteCount(), 1);
+});
+
+test('OPERATION_REPLAY_APPROVAL_NO_SECOND_WRITE_TEST replays approval without a second write', () => {
+  const state = auditedCommandState();
+  state.command.approveConvocation('CON-001', 'coach', { operationId: 'OP-APP-REPLAY' });
+  const result = state.command.approveConvocation('CON-001', 'coach', { operationId: 'OP-APP-REPLAY' });
+  assert.equal(result.idempotent, true);
+  assert.equal(state.getApprovalWriteCount(), 1);
+});
+
+test('OPERATION_REPLAY_PARTICIPATION_UPDATE_NO_SECOND_WRITE_TEST replays update without a second write', () => {
+  const state = auditedCommandState();
+  state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 10 }, { operationId: 'OP-PRT-REPLAY' });
+  const result = state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 10 }, { operationId: 'OP-PRT-REPLAY' });
+  assert.equal(result.idempotent, true);
+  assert.equal(state.getParticipationWriteCount(), 1);
+});
+
+test('OPERATION_REPLAY_PARTICIPATION_CREATE_NO_SECOND_WRITE_TEST replays create without a second write', () => {
+  let generated = 0;
+  const state = auditedCommandState({
+    idGenerator: {
+      operationId: () => 'OP-CREATE-REPLAY',
+      participationId: () => {
+        generated += 1;
+        return `PRT-GEN-${generated}`;
+      }
+    }
+  });
+  state.command.createParticipation({ PARTIDO_ID: 'PAR-001', ALUMNO_ID: 'ALU-002', CONVOCATORIA_ID: 'CON-001' }, { operationId: 'OP-CREATE-REPLAY' });
+  const result = state.command.createParticipation({ PARTIDO_ID: 'PAR-001', ALUMNO_ID: 'ALU-002', CONVOCATORIA_ID: 'CON-001' }, { operationId: 'OP-CREATE-REPLAY' });
+  assert.equal(result.idempotent, true);
+  assert.equal(state.getCreateParticipationWriteCount(), 1);
+  assert.equal(generated, 1);
+});
+
+test('OPERATION_REPLAY_COMMUNICATION_RETRY_NO_SECOND_SEND_TEST replays retry without a second send', () => {
+  const state = auditedCommandState();
+  state.command.retryCommunication('COM-001', { operationId: 'OP-RETRY-REPLAY' });
+  const result = state.command.retryCommunication('COM-001', { operationId: 'OP-RETRY-REPLAY' });
+  assert.equal(result.idempotent, true);
+  assert.equal(state.getRetrySendCount(), 1);
+});
+
+test('OPERATION_CROSS_COMMAND_ID_CONFLICT_TEST rejects operation id reused across commands', () => {
+  const state = auditedCommandState();
+  state.command.resolveAbsence('AST-001', 'FJ', { operationId: 'OP-CROSS' });
+  assert.throws(() => state.command.approveConvocation('CON-001', 'coach', { operationId: 'OP-CROSS' }), /OPERATION_ID_CONFLICT/);
+  assert.equal(state.getApprovalWriteCount(), 0);
+});
+
+test('OPERATION_NOOP_DIFFERENT_INTENT_CONFLICT_TEST rejects different no-op intent', () => {
+  const state = auditedCommandState();
+  state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 0 }, { operationId: 'OP-NOOP-INTENT' });
+  assert.throws(() => state.command.updateParticipation('PRT-001', { GOLES: 0 }, { operationId: 'OP-NOOP-INTENT' }), /OPERATION_ID_CONFLICT/);
+  assert.equal(state.getParticipationWriteCount(), 1);
+});
+
+test('OPERATION_CREATE_PARTICIPATION_STABLE_ID_TEST stores generated identity in durable audit evidence', () => {
+  const state = auditedCommandState({
+    idGenerator: {
+      operationId: () => 'OP-CREATE-STABLE',
+      participationId: () => 'PRT-STABLE'
+    }
+  });
+  state.command.createParticipation({ PARTIDO_ID: 'PAR-001', ALUMNO_ID: 'ALU-002', CONVOCATORIA_ID: 'CON-001' }, { operationId: 'OP-CREATE-STABLE' });
+  const createdEvent = functionalEvents(state.auditRows).filter((row) => row.ACCION === 'CREACION')[0];
+  assert.equal(createdEvent.ENTIDAD_ID, 'PRT-STABLE');
+});
+
 test('AUDIT_TWO_MANUAL_CHANGES_SAME_FIELD_TEST creates distinct events for distinct operations', () => {
   const state = auditedCommandState();
   state.command.setFinalSelection('CON-001', 'ALU-001', false, 'Decision', { operationId: 'OP-1' });
   state.command.setFinalSelection('CON-001', 'ALU-001', true, 'Decision', { operationId: 'OP-2' });
-  assert.equal(state.auditRows.length, 2);
+  assert.equal(functionalEvents(state.auditRows).length, 2);
 });
 
 test('AUDIT_TWO_PARTICIPATION_UPDATES_SAME_FIELD_TEST creates distinct participation events', () => {
   const state = auditedCommandState();
   state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 10 }, { operationId: 'OP-1' });
   state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 20 }, { operationId: 'OP-2' });
-  assert.equal(state.auditRows.length, 2);
+  assert.equal(functionalEvents(state.auditRows).length, 2);
 });
 
 test('AUDIT_DISTINCT_EVENT_ID_TEST creates distinct event ids for distinct operations', () => {
@@ -293,25 +408,25 @@ test('AUDIT_MULTIPLE_COMMUNICATION_ERROR_ATTEMPTS_TEST creates one event per dis
   const state = auditedCommandState();
   state.command.retryCommunication('COM-001', { operationId: 'OP-1' });
   state.command.retryCommunication('COM-001', { operationId: 'OP-2' });
-  assert.equal(state.auditRows.length, 2);
+  assert.equal(functionalEvents(state.auditRows).length, 2);
 });
 
 test('AUDIT_PARTICIPATION_MULTI_FIELD_TEST records one event per changed user field', () => {
   const state = auditedCommandState();
   state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 10, GOLES: 1, AMARILLAS: 1 }, { operationId: 'OP-MULTI' });
-  assert.deepEqual(state.auditRows.map((row) => row.CAMPO).sort(), ['AMARILLAS', 'GOLES', 'MINUTOS_JUGADOS']);
+  assert.deepEqual(functionalEvents(state.auditRows).map((row) => row.CAMPO).sort(), ['AMARILLAS', 'GOLES', 'MINUTOS_JUGADOS']);
 });
 
 test('AUDIT_PARTICIPATION_ONLY_CHANGED_FIELDS_TEST skips unchanged and modified timestamp fields', () => {
   const state = auditedCommandState();
   state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 0, MODIFICADO_EN: '2026-02-02' }, { operationId: 'OP-NOCHANGE' });
-  assert.equal(state.auditRows.length, 0);
+  assert.equal(functionalEvents(state.auditRows).length, 0);
 });
 
 test('AUDIT_ABSENCE_REASON_NOT_DUPLICATED_TEST stores safe absence motive only', () => {
   const state = auditedCommandState();
   state.command.resolveAbsence('AST-001', 'FJ', { operationId: 'OP-ABS', reason: 'Doctor note with private detail' });
-  assert.equal(state.auditRows[0].MOTIVO, 'ABSENCE_JUSTIFIED');
+  assert.equal(functionalEvents(state.auditRows)[0].MOTIVO, 'ABSENCE_JUSTIFIED');
 });
 
 test('AUDIT_MEDICAL_TEXT_REDACTED_TEST redacts medical text field values', () => {

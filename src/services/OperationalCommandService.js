@@ -34,6 +34,38 @@ function createOperationalCommandService(dependencies) {
     return String(value);
   }
 
+  function stableStringify(value) {
+    if (value === undefined || value === null) {
+      return 'null';
+    }
+
+    if (Array.isArray(value)) {
+      return '[' + value.map(stableStringify).join(',') + ']';
+    }
+
+    if (typeof value === 'object') {
+      return '{' + Object.keys(value).sort().map(function(key) {
+        return JSON.stringify(key) + ':' + stableStringify(value[key]);
+      }).join(',') + '}';
+    }
+
+    return JSON.stringify(value);
+  }
+
+  function intentEvent(operationId, intent, actor) {
+    return {
+      EVENTO_ID: 'AUD-' + operationId + '-OPERACION-INTENT',
+      USUARIO: actor || 'SYSTEM',
+      ENTIDAD: 'OPERACION',
+      ENTIDAD_ID: operationId,
+      ACCION: intent.command,
+      CAMPO: 'INTENT',
+      VALOR_ANTERIOR: '',
+      VALOR_NUEVO: stableStringify(intent),
+      MOTIVO: 'OPERATION_INTENT'
+    };
+  }
+
   function canonicalEvent(event) {
     return {
       ENTIDAD: canonicalValue(event.ENTIDAD),
@@ -61,36 +93,24 @@ function createOperationalCommandService(dependencies) {
     });
   }
 
-  function beginAuditedOperation(operationId, expectedEvents) {
+  function beginAuditedOperation(operationId, intent) {
     var existing = existingEventsFor(operationId);
-    var expectedById = {};
-    var existingById = {};
-
-    expectedEvents.forEach(function(event) {
-      expectedById[event.EVENTO_ID] = event;
-    });
-
-    existing.forEach(function(event) {
-      existingById[event.EVENTO_ID] = event;
-    });
+    var expectedIntent = intentEvent(operationId, intent, intent.actor);
+    var existingIntent = null;
 
     if (existing.length === 0) {
       return { status: 'NEW_OPERATION', events: [] };
     }
 
-    if (expectedEvents.length === 0) {
-      return { status: 'IDEMPOTENT_REPLAY', events: existing };
-    }
-
-    if (existing.length !== expectedEvents.length) {
-      throw utils.createDomainError('OPERATION_ID_CONFLICT', operationId);
-    }
-
-    expectedEvents.forEach(function(event) {
-      if (!existingById[event.EVENTO_ID] || !sameEvent(existingById[event.EVENTO_ID], event)) {
-        throw utils.createDomainError('OPERATION_ID_CONFLICT', operationId);
+    existing.forEach(function(event) {
+      if (event.EVENTO_ID === expectedIntent.EVENTO_ID) {
+        existingIntent = event;
       }
     });
+
+    if (!existingIntent || !sameEvent(existingIntent, expectedIntent)) {
+      throw utils.createDomainError('OPERATION_ID_CONFLICT', operationId);
+    }
 
     return { status: 'IDEMPOTENT_REPLAY', events: existing };
   }
@@ -101,8 +121,8 @@ function createOperationalCommandService(dependencies) {
     });
   }
 
-  function runAudited(operationId, expectedEvents, writeFn, resultEventsFn) {
-    var status = beginAuditedOperation(operationId, expectedEvents);
+  function runAudited(operationId, intent, writeFn, resultEventsFn) {
+    var status = beginAuditedOperation(operationId, intent);
     var result;
     var events;
 
@@ -111,7 +131,7 @@ function createOperationalCommandService(dependencies) {
     }
 
     result = writeFn();
-    events = resultEventsFn ? resultEventsFn(result) : expectedEvents;
+    events = [intentEvent(operationId, intent, intent.actor)].concat(resultEventsFn ? resultEventsFn(result) : []);
     try {
       appendEvents(events);
     } catch (error) {
@@ -143,24 +163,27 @@ function createOperationalCommandService(dependencies) {
     options = options || {};
     var before = getAttendance(attendanceId);
     var opId = requireOperationId('ABSENCE', options);
-    var event = {
-      EVENTO_ID: 'AUD-' + opId + '-ASISTENCIA-' + attendanceId + '-TRANSICION_AUSENCIA',
-      USUARIO: options.actor || 'SYSTEM',
-      ENTIDAD: 'ASISTENCIAS',
-      ENTIDAD_ID: attendanceId,
-      ACCION: 'TRANSICION_AUSENCIA',
-      CAMPO: 'ESTADO',
-      VALOR_ANTERIOR: before ? before.ESTADO : '',
-      VALOR_NUEVO: targetState,
-      MOTIVO: absenceMotive(targetState, options.reason)
+    var intent = {
+      actor: options.actor || 'SYSTEM',
+      attendanceId: attendanceId,
+      command: 'RESOLVE_ABSENCE',
+      targetState: targetState
     };
 
-    return runAudited(opId, [event], function() {
+    return runAudited(opId, intent, function() {
       return services.absenceResolutionService.resolveAbsence(attendanceId, targetState, options);
     }, function(result) {
-      event.VALOR_NUEVO = result.attendance.ESTADO;
-      event.MOTIVO = absenceMotive(result.attendance.ESTADO, options.reason);
-      return [event];
+      return [{
+        EVENTO_ID: 'AUD-' + opId + '-ASISTENCIA-' + attendanceId + '-TRANSICION_AUSENCIA',
+        USUARIO: options.actor || 'SYSTEM',
+        ENTIDAD: 'ASISTENCIAS',
+        ENTIDAD_ID: attendanceId,
+        ACCION: 'TRANSICION_AUSENCIA',
+        CAMPO: 'ESTADO',
+        VALOR_ANTERIOR: before ? before.ESTADO : '',
+        VALOR_NUEVO: result.attendance.ESTADO,
+        MOTIVO: absenceMotive(result.attendance.ESTADO, options.reason)
+      }];
     });
   }
 
@@ -187,7 +210,11 @@ function createOperationalCommandService(dependencies) {
       }
     });
 
-    return runAudited(opId, expectedEvents, function() {
+    return runAudited(opId, {
+      actor: options.actor || 'SYSTEM',
+      command: 'RESOLVE_EXPIRED_ABSENCES',
+      now: now ? new Date(now).toISOString() : ''
+    }, function() {
       return services.absenceResolutionService.resolveExpiredAbsences(now);
     }, function(results) {
       return results.map(function(result) {
@@ -217,20 +244,29 @@ function createOperationalCommandService(dependencies) {
     var before = getDetail(convocationId, studentId);
     var detailId = before ? before.DETALLE_ID : convocationId + '-' + studentId;
     var opId = requireOperationId('CONVOCATION_SELECTION', options);
-    var event = {
-      EVENTO_ID: 'AUD-' + opId + '-CONVOCATORIA_DETALLE-' + detailId + '-SELECCIONADO_FINAL',
-      USUARIO: options.actor || 'coach',
-      ENTIDAD: 'CONVOCATORIA_DETALLE',
-      ENTIDAD_ID: detailId,
-      ACCION: 'CAMBIO_MANUAL_CONVOCATORIA',
-      CAMPO: 'SELECCIONADO_FINAL',
-      VALOR_ANTERIOR: before ? before.SELECCIONADO_FINAL : '',
-      VALOR_NUEVO: selected,
-      MOTIVO: 'MANUAL_CHANGE'
+    var normalizedSelected = utils.normalizeStrictBoolean(selected, 'SELECCIONADO_FINAL');
+    var intent = {
+      actor: options.actor || 'coach',
+      command: 'SET_FINAL_SELECTION',
+      convocationId: convocationId,
+      selected: normalizedSelected,
+      studentId: studentId
     };
 
-    return runAudited(opId, [event], function() {
+    return runAudited(opId, intent, function() {
       return services.convocationService.setFinalSelection(convocationId, studentId, selected, reason);
+    }, function(result) {
+      return [{
+        EVENTO_ID: 'AUD-' + opId + '-CONVOCATORIA_DETALLE-' + detailId + '-SELECCIONADO_FINAL',
+        USUARIO: options.actor || 'coach',
+        ENTIDAD: 'CONVOCATORIA_DETALLE',
+        ENTIDAD_ID: detailId,
+        ACCION: 'CAMBIO_MANUAL_CONVOCATORIA',
+        CAMPO: 'SELECCIONADO_FINAL',
+        VALOR_ANTERIOR: before ? before.SELECCIONADO_FINAL : '',
+        VALOR_NUEVO: result.SELECCIONADO_FINAL,
+        MOTIVO: 'MANUAL_CHANGE'
+      }];
     });
   }
 
@@ -240,43 +276,54 @@ function createOperationalCommandService(dependencies) {
     var detailId = before ? before.DETALLE_ID : convocationId + '-' + studentId;
     var opId = requireOperationId('CONVOCATION_POSITION', options);
     var normalizedPosition = String(position || '').trim().toUpperCase();
-    var event = {
-      EVENTO_ID: 'AUD-' + opId + '-CONVOCATORIA_DETALLE-' + detailId + '-POSICION_ASIGNADA',
-      USUARIO: options.actor || 'coach',
-      ENTIDAD: 'CONVOCATORIA_DETALLE',
-      ENTIDAD_ID: detailId,
-      ACCION: 'CAMBIO_MANUAL_CONVOCATORIA',
-      CAMPO: 'POSICION_ASIGNADA',
-      VALOR_ANTERIOR: before ? before.POSICION_ASIGNADA : '',
-      VALOR_NUEVO: normalizedPosition,
-      MOTIVO: 'MANUAL_CHANGE'
+    var intent = {
+      actor: options.actor || 'coach',
+      command: 'ASSIGN_POSITION',
+      convocationId: convocationId,
+      position: normalizedPosition,
+      studentId: studentId
     };
 
-    return runAudited(opId, [event], function() {
+    return runAudited(opId, intent, function() {
       return services.convocationService.assignPlayerPosition(convocationId, studentId, position, reason);
     }, function(result) {
-      event.VALOR_NUEVO = result.POSICION_ASIGNADA;
-      return [event];
+      return [{
+        EVENTO_ID: 'AUD-' + opId + '-CONVOCATORIA_DETALLE-' + detailId + '-POSICION_ASIGNADA',
+        USUARIO: options.actor || 'coach',
+        ENTIDAD: 'CONVOCATORIA_DETALLE',
+        ENTIDAD_ID: detailId,
+        ACCION: 'CAMBIO_MANUAL_CONVOCATORIA',
+        CAMPO: 'POSICION_ASIGNADA',
+        VALOR_ANTERIOR: before ? before.POSICION_ASIGNADA : '',
+        VALOR_NUEVO: result.POSICION_ASIGNADA,
+        MOTIVO: 'MANUAL_CHANGE'
+      }];
     });
   }
 
   function approveConvocation(convocationId, actor, options) {
     options = options || {};
     var opId = requireOperationId('CONVOCATION_APPROVAL', options);
-    var event = {
-      EVENTO_ID: 'AUD-' + opId + '-CONVOCATORIA-' + convocationId + '-APROBACION',
-      USUARIO: actor,
-      ENTIDAD: 'CONVOCATORIAS',
-      ENTIDAD_ID: convocationId,
-      ACCION: 'APROBACION',
-      CAMPO: 'ESTADO',
-      VALOR_ANTERIOR: 'PROPUESTA',
-      VALOR_NUEVO: 'APROBADA',
-      MOTIVO: 'HUMAN_APPROVAL'
+    var intent = {
+      actor: String(actor || '').trim(),
+      command: 'APPROVE_CONVOCATION',
+      convocationId: convocationId
     };
 
-    return runAudited(opId, [event], function() {
+    return runAudited(opId, intent, function() {
       return services.convocationService.approveConvocation(convocationId, actor);
+    }, function() {
+      return [{
+        EVENTO_ID: 'AUD-' + opId + '-CONVOCATORIA-' + convocationId + '-APROBACION',
+        USUARIO: actor,
+        ENTIDAD: 'CONVOCATORIAS',
+        ENTIDAD_ID: convocationId,
+        ACCION: 'APROBACION',
+        CAMPO: 'ESTADO',
+        VALOR_ANTERIOR: 'PROPUESTA',
+        VALOR_NUEVO: 'APROBADA',
+        MOTIVO: 'HUMAN_APPROVAL'
+      }];
     });
   }
 
@@ -312,7 +359,17 @@ function createOperationalCommandService(dependencies) {
       }
     });
 
-    return runAudited(opId, participationEvents(opId, participationId, before, expectedAfter, options.actor), function() {
+    return runAudited(opId, {
+      actor: options.actor || 'coach',
+      command: 'UPDATE_PARTICIPATION',
+      participationId: participationId,
+      updates: auditedFields.reduce(function(acc, field) {
+        if (Object.prototype.hasOwnProperty.call(updates || {}, field)) {
+          acc[field] = updates[field];
+        }
+        return acc;
+      }, {})
+    }, function() {
       return services.participationService.updateParticipation(participationId, updates);
     }, function(result) {
       return participationEvents(opId, participationId, before, result, options.actor);
@@ -323,21 +380,18 @@ function createOperationalCommandService(dependencies) {
     options = options || {};
     var opId = requireOperationId('PARTICIPATION_CREATE', options);
     var normalizedInput = copyRecord(input);
-    var participationId = normalizedInput.PARTICIPACION_ID || normalizedInput.participacionId || (idGenerator.participationId ? idGenerator.participationId() : '');
+    var intent = {
+      actor: options.actor || 'coach',
+      alumnoId: normalizedInput.ALUMNO_ID || normalizedInput.alumnoId,
+      command: 'CREATE_PARTICIPATION',
+      convocationId: normalizedInput.CONVOCATORIA_ID || normalizedInput.convocationId,
+      matchId: normalizedInput.PARTIDO_ID || normalizedInput.matchId,
+      requestedParticipationId: normalizedInput.PARTICIPACION_ID || normalizedInput.participacionId || ''
+    };
 
-    normalizedInput.PARTICIPACION_ID = participationId;
-
-    return runAudited(opId, [{
-      EVENTO_ID: 'AUD-' + opId + '-PARTICIPACION-' + participationId + '-CREACION',
-      USUARIO: options.actor || 'coach',
-      ENTIDAD: 'PARTICIPACION_PARTIDO',
-      ENTIDAD_ID: participationId,
-      ACCION: 'CREACION',
-      CAMPO: 'PARTICIPACION_ID',
-      VALOR_ANTERIOR: '',
-      VALOR_NUEVO: participationId,
-      MOTIVO: 'POST_MATCH_CAPTURE'
-    }], function() {
+    return runAudited(opId, intent, function() {
+      var participationId = normalizedInput.PARTICIPACION_ID || normalizedInput.participacionId || (idGenerator.participationId ? idGenerator.participationId() : '');
+      normalizedInput.PARTICIPACION_ID = participationId;
       return services.participationService.createParticipation(normalizedInput);
     }, function(result) {
       return [{
@@ -373,7 +427,10 @@ function createOperationalCommandService(dependencies) {
       };
     });
 
-    return runAudited(opId, expectedEvents, function() {
+    return runAudited(opId, {
+      command: 'SEND_PENDING_COMMUNICATIONS',
+      communicationIds: expectedEvents.map(function(event) { return event.ENTIDAD_ID; }).sort()
+    }, function() {
       return services.communicationService.sendPendingCommunications();
     }, function(results) {
       return results.filter(function(result) {
@@ -400,31 +457,33 @@ function createOperationalCommandService(dependencies) {
       return candidate.COMUNICACION_ID === communicationId;
     })[0] || {};
     var opId = requireOperationId('COMMUNICATION_RETRY', options);
-    var expected = [{
-      EVENTO_ID: 'AUD-' + opId + '-COMUNICACION-' + communicationId + '-CAMBIO_ESTADO',
-      USUARIO: 'SYSTEM',
-      ENTIDAD: 'COMUNICACIONES',
-      ENTIDAD_ID: communicationId,
-      ACCION: 'CAMBIO_ESTADO',
-      CAMPO: 'ESTADO',
-      VALOR_ANTERIOR: record.ESTADO || 'ERROR',
-      VALOR_NUEVO: 'ENVIADO',
-      MOTIVO: 'SEND_ATTEMPT'
-    }];
+    var beforeState = record.ESTADO || 'ERROR';
 
-    return runAudited(opId, expected, function() {
+    return runAudited(opId, {
+      command: 'RETRY_COMMUNICATION',
+      communicationId: communicationId
+    }, function() {
       return services.communicationService.retryCommunication(communicationId);
     }, function(result) {
       if (result.skipped) {
         return [];
       }
-      expected[0].VALOR_NUEVO = result.communication.ESTADO;
-      return [expected[0]];
+      return [{
+        EVENTO_ID: 'AUD-' + opId + '-COMUNICACION-' + communicationId + '-CAMBIO_ESTADO',
+        USUARIO: 'SYSTEM',
+        ENTIDAD: 'COMUNICACIONES',
+        ENTIDAD_ID: communicationId,
+        ACCION: 'CAMBIO_ESTADO',
+        CAMPO: 'ESTADO',
+        VALOR_ANTERIOR: beforeState,
+        VALOR_NUEVO: result.communication.ESTADO,
+        MOTIVO: 'SEND_ATTEMPT'
+      }];
     });
   }
 
-  function generateConvocation(matchId) {
-    return services.convocationService.generateConvocation(matchId);
+  function generateConvocation(matchId, actor) {
+    return services.convocationService.generateConvocation(matchId, actor);
   }
 
   function generateAbsenceCommunications(attendanceId) {
