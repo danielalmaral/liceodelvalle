@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const utils = require('../../src/common/DomainUtils');
 require('../../src/config/ConfigSetup');
 require('../../src/config/PanelSetup');
@@ -25,6 +27,7 @@ const { createAppsScriptMailAdapter } = require('../../src/adapters/AppsScriptMa
 const { createExternalMailGuardAdapter, createLdvAppsScriptRuntime } = require('../../src/AppsScriptRuntimeBootstrap');
 const handlers = require('../../src/PanelHandlers');
 const { createPanelClientController } = require('../../src/PanelClientController');
+const { createPanelRenderer } = require('../../src/PanelRenderer');
 const { getLdvPanelHtml, onOpen, setupLdvOperationalSheetsWithDependencies } = require('../../src/PanelUi');
 const { createTriggerHandlers } = require('../../src/triggers/TriggerHandlers');
 const { createAppsScriptRuntime } = require('../../src/RuntimeComposition');
@@ -1112,6 +1115,133 @@ test('PANEL_ATTENDANCE_CLIENT_DEADLINE_IGNORED_TEST', () => {
   }
 });
 
+function panelRendererHarness(overrides = {}) {
+  const calls = [];
+  const controller = {};
+  [
+    'loadDashboard',
+    'loadReferenceData',
+    'loadAttendance',
+    'markAttendance',
+    'resolveAbsence',
+    'createMatch',
+    'updateMatch',
+    'markMatchPlayed',
+    'cancelMatch',
+    'generateConvocation',
+    'loadConvocation',
+    'setFinalSelection',
+    'assignPosition',
+    'approveConvocation',
+    'prepareConvocationCommunications',
+    'sendPendingCommunications',
+    'loadPostMatch',
+    'saveParticipation'
+  ].forEach((name) => {
+    controller[name] = (...args) => {
+      calls.push({ name, args });
+      return { name, args };
+    };
+  });
+  const state = {
+    dashboard: {
+      currentSession: { sesionId: 'SES-001' },
+      pendingAbsences: 1,
+      expiredAbsences: 0,
+      nextAbsenceDeadline: '2026-02-04T08:00:00Z',
+      communications: { pending: 2, error: 1, uncertainDelivery: 1 },
+      sportAlerts: [{ code: 'LOW_PARTICIPATION_STREAK' }],
+      readinessIssues: [{ code: 'PANEL_POSTMATCH_ATTENDANCE_REQUIRED' }]
+    },
+    referenceData: {
+      openSessions: [
+        { sesionId: 'SES-001', competencia: 'A', fecha: '2026-02-03' },
+        { sesionId: 'SES-002', competencia: 'B', fecha: '2026-02-04' }
+      ],
+      programmedMatches: [
+        { partidoId: 'PAR-001', rival: 'Rival Ficticio', competencia: 'A', fecha: '2026-02-10', horaPartido: '09:00', sede: 'Cancha' }
+      ],
+      playedMatches: [
+        { partidoId: 'PAR-002', rival: 'Rival Jugado', competencia: 'A', fecha: '2026-02-01' }
+      ],
+      runtimeCapabilities: { externalMailEnabled: false }
+    },
+    attendance: {
+      rows: [
+        { attendanceId: 'AST-001', studentId: 'ALU-001', nombre: 'Alumno Ficticio 1', estadoActual: '', capabilities: { canMarkAttendance: true } },
+        { attendanceId: 'AST-002', studentId: 'ALU-002', nombre: 'Alumno Ficticio 2', estadoActual: 'F', capabilities: { canMarkAttendance: false } }
+      ]
+    },
+    convocation: {
+      convocationId: 'CON-001',
+      details: [
+        {
+          ALUMNO_ID: 'ALU-001',
+          nombre: 'Alumno Ficticio 1',
+          ELEGIBILITY_STATUS: 'ELIGIBLE',
+          MOTIVO_NO_ELEGIBLE: '',
+          nivel: 'A1',
+          rotacionAntes: 0,
+          prioridadRotacion: 1,
+          puntajeAsistencia: 10,
+          presenciaReal: true,
+          recomendadoSistema: true,
+          seleccionadoFinal: true,
+          posicionPrincipal: 'DEF',
+          posicionSecundaria: 'MED',
+          posicionAsignada: 'DEF',
+          motivoCambio: ''
+        },
+        {
+          ALUMNO_ID: 'ALU-002',
+          nombre: 'Alumno Ficticio 2',
+          ELEGIBILITY_STATUS: 'PENDING',
+          MOTIVO_NO_ELEGIBLE: 'F pendiente',
+          seleccionadoFinal: false,
+          posicionPrincipal: 'DEL',
+          posicionSecundaria: 'MED'
+        },
+        {
+          ALUMNO_ID: 'ALU-003',
+          nombre: 'Alumno Ficticio 3',
+          ELEGIBILITY_STATUS: 'INELIGIBLE',
+          MOTIVO_NO_ELEGIBLE: 'FI',
+          seleccionadoFinal: false,
+          posicionPrincipal: 'PO',
+          posicionSecundaria: 'DEF'
+        }
+      ]
+    },
+    postMatch: {
+      readiness: { ready: false },
+      issues: [{ code: 'PANEL_POSTMATCH_ATTENDANCE_REQUIRED', studentId: 'ALU-002' }],
+      rows: [
+        {
+          ALUMNO_ID: 'ALU-001',
+          nombre: 'Alumno Ficticio 1',
+          ASISTENCIA_ESTADO: 'A',
+          ASISTIO_DERIVADO: true,
+          CONDICION_INICIAL: 'TITULAR',
+          MINUTOS_JUGADOS: 60,
+          GOLES: 0,
+          AMARILLAS: 0,
+          ROJAS: 0,
+          CALIFICACION: 5,
+          OBSERVACIONES: ''
+        },
+        {
+          ALUMNO_ID: 'ALU-002',
+          nombre: 'Alumno Ficticio 2',
+          ASISTENCIA_ESTADO: '',
+          ASISTIO_DERIVADO: false
+        }
+      ]
+    },
+    ...overrides
+  };
+  return { calls, controller, state, renderer: createPanelRenderer({ state, controller }) };
+}
+
 test('PANEL_UI_NAVIGATION_BINDINGS_TEST', () => {
   const html = getLdvPanelHtml();
   assert.equal(html.includes('addEventListener("click"'), true);
@@ -1144,9 +1274,12 @@ test('PANEL_UI_MATCH_ACTIONS_TEST', () => {
 });
 
 test('PANEL_UI_EXTERNAL_MAIL_DISABLED_TEST', () => {
-  const html = getLdvPanelHtml();
+  const html = createPanelRenderer({
+    state: { referenceData: { runtimeCapabilities: { externalMailEnabled: false }, programmedMatches: [] }, convocation: { convocationId: 'CON-001', details: [] } },
+    controller: {}
+  }).renderConvocations();
   assert.equal(html.includes('Enviar pendientes'), true);
-  assert.equal(html.includes('id=\\"send-pending\\" disabled'), true);
+  assert.equal(html.includes('id="send-pending" data-action="communication-send" disabled'), true);
 });
 
 test('PANEL_UI_CONVOCATION_GENERATE_TEST', () => {
@@ -1182,16 +1315,190 @@ test('PANEL_UI_POST_MATCH_CREATE_UPDATE_TEST', () => {
   assert.equal(getLdvPanelHtml().includes('Guardar participacion'), true);
 });
 
-test('P14_END_TO_END_FAKE_RUNTIME_TEST', () => {
-  const options = runtimeOptions({ clock: { now: () => new Date('2026-02-03T08:30:00') } });
-  options.repositories.attendanceRepository = createArrayRepository([]);
-  const runtime = createAppsScriptRuntime(options);
-  const createdSession = runtime.commands.createSession({ TIPO: 'ENTRENAMIENTO', FECHA: '2026-02-03', HORA_INICIO: '08:00', HORA_FIN: '09:00', COMPETENCIA: 'GENERAL' });
-  const attendance = runtime.commands.createAttendance({ sesionId: createdSession.SESION_ID, alumnoId: 'ALU-001', estado: 'A' });
-  const dashboard = runtime.queries.getPanelDashboard();
-  assert.equal(attendance.ALUMNO_ID, 'ALU-001');
-  assert.equal(dashboard.attendanceSummary.captured, 1);
-  assert.equal(JSON.stringify(runtime.queries.getEvents()).includes('family@example.invalid'), false);
+test('PANEL_UI_SESSION_SELECTOR_TEST', () => {
+  const { renderer } = panelRendererHarness();
+  const html = renderer.renderAttendance();
+  assert.equal(html.includes('id="attendance-session"'), true);
+  assert.equal(html.includes('value="SES-001" selected'), true);
+  assert.equal(html.includes('value="SES-002"'), true);
+});
+
+test('PANEL_UI_SESSION_SELECTOR_CHANGE_TEST', () => {
+  const { calls, renderer, state } = panelRendererHarness();
+  renderer.dispatch({ type: 'attendanceSessionChange', sessionId: 'SES-002' });
+  assert.equal(state.selectedSessionId, 'SES-002');
+  assert.deepEqual(calls.at(-1), { name: 'loadAttendance', args: ['SES-002'] });
+});
+
+test('PANEL_UI_ATTENDANCE_NO_EMPTY_SESSION_RPC_TEST', () => {
+  const { calls, renderer } = panelRendererHarness({ dashboard: {}, referenceData: { openSessions: [] } });
+  renderer.dispatch({ type: 'attendanceSessionChange', sessionId: '' });
+  renderer.dispatch({ type: 'markAttendance', studentId: 'ALU-001', state: 'A' });
+  assert.equal(calls.length, 0);
+});
+
+test('PANEL_UI_ATTENDANCE_SELECTED_SESSION_TEST', () => {
+  const { calls, renderer } = panelRendererHarness({ selectedSessionId: 'SES-002' });
+  renderer.dispatch({ type: 'markAttendance', studentId: 'ALU-001', state: 'R' });
+  assert.deepEqual(calls.at(-1), { name: 'markAttendance', args: ['SES-002', 'ALU-001', 'R'] });
+});
+
+test('PANEL_UI_ATTENDANCE_USES_ATTENDANCE_ID_TEST', () => {
+  const { calls, renderer } = panelRendererHarness();
+  const html = renderer.renderAttendance();
+  assert.equal(html.includes('data-attendance-id="AST-002"'), true);
+  renderer.dispatch({ type: 'resolveAbsence', attendanceId: 'AST-002', targetState: 'FJ', reason: 'motivo ficticio' });
+  assert.deepEqual(calls.at(-1), { name: 'resolveAbsence', args: ['AST-002', 'FJ', 'motivo ficticio'] });
+});
+
+test('PANEL_UI_ATTENDANCE_REASON_TEST', () => {
+  const { renderer } = panelRendererHarness();
+  const html = renderer.renderAttendance();
+  assert.equal(html.includes('class="absence-reason"'), true);
+  assert.equal(html.includes('placeholder="Motivo"'), true);
+});
+
+test('PANEL_UI_ATTENDANCE_REFRESH_TEST', () => {
+  const html = getLdvPanelHtml();
+  assert.equal(html.includes('controller.loadReferenceData(function(){controller.loadAttendance();});'), true);
+  assert.equal(html.includes('matchWrite:function(){controller.loadReferenceData(function(){controller.loadDashboard();renderer.render("matches");});}'), true);
+});
+
+test('PANEL_UI_ATTENDANCE_NO_FI_TEST', () => {
+  const { renderer } = panelRendererHarness();
+  const html = renderer.renderAttendance();
+  assert.equal(html.includes('data-state="FI"'), false);
+  assert.equal(html.includes('data-target-state="FI"'), false);
+});
+
+test('PANEL_UI_MATCH_CREATE_FORM_TEST', () => {
+  const { renderer } = panelRendererHarness();
+  const html = renderer.renderMatches();
+  ['COMPETENCIA', 'JORNADA', 'RIVAL', 'FECHA', 'HORA_CITACION', 'HORA_PARTIDO', 'SEDE', 'LOCAL_VISITANTE', 'DURACION_MINUTOS', 'UNIFORME', 'INDICACIONES', 'OBSERVACIONES'].forEach((name) => {
+    assert.equal(html.includes(`name="${name}"`), true, name);
+  });
+});
+
+test('PANEL_UI_MATCH_CREATE_REAL_PAYLOAD_TEST', () => {
+  const { calls, renderer } = panelRendererHarness();
+  renderer.dispatch({ type: 'createMatch', payload: { RIVAL: 'Rival Ficticio', FECHA: '2026-02-10', ignored: 'client' } });
+  assert.deepEqual(calls.at(-1), { name: 'createMatch', args: [{ RIVAL: 'Rival Ficticio', FECHA: '2026-02-10' }] });
+});
+
+test('PANEL_UI_MATCH_UPDATE_REAL_ID_TEST', () => {
+  const { calls, renderer } = panelRendererHarness();
+  const html = renderer.renderMatches();
+  assert.equal(html.includes('data-match-id="PAR-001"'), true);
+  renderer.dispatch({ type: 'updateMatch', matchId: 'PAR-001', payload: { SEDE: 'Cancha 2', ignored: 'client' } });
+  assert.deepEqual(calls.at(-1), { name: 'updateMatch', args: ['PAR-001', { SEDE: 'Cancha 2' }] });
+});
+
+test('PANEL_UI_MATCH_PLAYED_AND_CANCEL_REAL_ID_TEST', () => {
+  const { calls, renderer } = panelRendererHarness();
+  renderer.dispatch({ type: 'markMatchPlayed', matchId: 'PAR-001', payload: { GOLES_FAVOR: '2', GOLES_CONTRA: '1', ESTADO: 'client' } });
+  renderer.dispatch({ type: 'cancelMatch', matchId: 'PAR-001' });
+  assert.deepEqual(calls.at(-2), { name: 'markMatchPlayed', args: ['PAR-001', { GOLES_FAVOR: '2', GOLES_CONTRA: '1' }] });
+  assert.deepEqual(calls.at(-1), { name: 'cancelMatch', args: ['PAR-001'] });
+});
+
+test('PANEL_UI_CONVOCATION_MATCH_SELECTOR_AND_GENERATE_REAL_ID_TEST', () => {
+  const { calls, renderer } = panelRendererHarness();
+  const html = renderer.renderConvocations();
+  assert.equal(html.includes('id="convocation-match"'), true);
+  assert.equal(html.includes('data-match-id="PAR-001"'), true);
+  renderer.dispatch({ type: 'generateConvocation', matchId: 'PAR-001' });
+  assert.deepEqual(calls.at(-1), { name: 'generateConvocation', args: ['PAR-001'] });
+});
+
+test('PANEL_UI_CONVOCATION_DISABLED_STATUSES_TEST', () => {
+  const { renderer } = panelRendererHarness();
+  const html = renderer.renderConvocations();
+  assert.equal(html.includes('PENDING'), true);
+  assert.equal(html.includes('INELIGIBLE'), true);
+  assert.equal((html.match(/disabled/g) || []).length >= 4, true);
+});
+
+test('PANEL_UI_CONVOCATION_SELECTION_POSITION_REASON_TEST', () => {
+  const { calls, renderer } = panelRendererHarness();
+  const html = renderer.renderConvocations();
+  assert.equal(html.includes('class="convocation-reason"'), true);
+  assert.equal(html.includes('<option value="DEF" selected>DEF</option><option value="MED">MED</option>'), true);
+  renderer.dispatch({ type: 'setFinalSelection', convocationId: 'CON-001', studentId: 'ALU-001', selected: false, reason: 'rotacion ficticia' });
+  renderer.dispatch({ type: 'assignPosition', convocationId: 'CON-001', studentId: 'ALU-001', position: 'MED', reason: 'rotacion ficticia' });
+  assert.deepEqual(calls.at(-2), { name: 'setFinalSelection', args: ['CON-001', 'ALU-001', false, 'rotacion ficticia'] });
+  assert.deepEqual(calls.at(-1), { name: 'assignPosition', args: ['CON-001', 'ALU-001', 'MED', 'rotacion ficticia'] });
+});
+
+test('PANEL_UI_CONVOCATION_APPROVE_PREPARE_SEND_TEST', () => {
+  const { calls, renderer } = panelRendererHarness({ referenceData: { runtimeCapabilities: { externalMailEnabled: true }, programmedMatches: [] } });
+  const html = renderer.renderConvocations();
+  assert.equal(html.includes('id="send-pending" data-action="communication-send" >Enviar pendientes</button>'), true);
+  renderer.dispatch({ type: 'approveConvocation', convocationId: 'CON-001' });
+  renderer.dispatch({ type: 'prepareCommunications', convocationId: 'CON-001' });
+  renderer.dispatch({ type: 'sendPendingCommunications' });
+  assert.deepEqual(calls.slice(-3).map((call) => call.name), ['approveConvocation', 'prepareConvocationCommunications', 'sendPendingCommunications']);
+});
+
+test('PANEL_UI_POSTMATCH_SELECTOR_AND_SELECTED_ROWS_TEST', () => {
+  const { calls, renderer } = panelRendererHarness();
+  const html = renderer.renderPostMatch();
+  assert.equal(html.includes('id="postmatch-match"'), true);
+  assert.equal(html.includes('data-student-id="ALU-001"'), true);
+  renderer.dispatch({ type: 'selectPlayedMatch', matchId: 'PAR-002' });
+  assert.deepEqual(calls.at(-1), { name: 'loadPostMatch', args: ['PAR-002'] });
+});
+
+test('PANEL_UI_POSTMATCH_READINESS_ISSUES_AND_READONLY_TEST', () => {
+  const { renderer } = panelRendererHarness();
+  const html = renderer.renderPostMatch();
+  assert.equal(html.includes('PANEL_POSTMATCH_ATTENDANCE_REQUIRED'), true);
+  assert.equal(html.includes('<td class="readonly">A</td>'), true);
+  assert.equal(html.includes('name="ASISTENCIA_ESTADO"'), false);
+});
+
+test('PANEL_UI_POSTMATCH_SAVE_PAYLOAD_TEST', () => {
+  const { calls, renderer } = panelRendererHarness();
+  renderer.dispatch({
+    type: 'saveParticipation',
+    matchId: 'PAR-002',
+    studentId: 'ALU-001',
+    payload: { CONDICION_INICIAL: 'TITULAR', MINUTOS_JUGADOS: '60', ASISTENCIA_ESTADO: 'client', ASISTIO: 'client' }
+  });
+  assert.deepEqual(calls.at(-1), { name: 'saveParticipation', args: ['PAR-002', 'ALU-001', { CONDICION_INICIAL: 'TITULAR', MINUTOS_JUGADOS: '60' }] });
+});
+
+test('PANEL_UI_ALERTS_FROM_DASHBOARD_TEST', () => {
+  const { renderer } = panelRendererHarness();
+  const html = renderer.renderAlerts();
+  assert.equal(html.includes('LOW_PARTICIPATION_STREAK'), true);
+  assert.equal(html.includes('PANEL_POSTMATCH_ATTENDANCE_REQUIRED'), true);
+  assert.equal(html.includes('Comunicaciones error'), true);
+});
+
+test('P14_UI_REQUIRES_BOUND_CONTAINER_TEST', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'PanelUi.js'), 'utf8');
+  assert.equal(source.includes('SpreadsheetApp.getUi().showSidebar'), true);
+  assert.equal(source.includes('function doGet'), false);
+});
+
+function docsText(files) {
+  return files.map((file) => fs.readFileSync(path.join(__dirname, '..', '..', file), 'utf8')).join('\n');
+}
+
+test('P14_CONTAINER_BOUND_DEPLOYMENT_CONTRACT_TEST', () => {
+  const text = docsText([
+    'README.md',
+    'docs/ARCHITECTURE.md',
+    'docs/APPS_SCRIPT_BOOTSTRAP_CONTRACT.md',
+    'docs/REAL_GOOGLE_SMOKE_RUNBOOK.md',
+    'docs/P14_OPERATIONAL_WORKFLOW.md',
+    'docs/SAFE_BATCH_P14_REPORT.md',
+    'docs/PANEL_CONTRACT.md'
+  ]);
+  assert.match(text, /Apps Script container-bound/);
+  assert.match(text, /Spreadsheet container/);
+  assert.doesNotMatch(text, /standalone/i);
+  assert.doesNotMatch(text, /web app/i);
 });
 
 function appendRecords(sheet, headers, records) {
@@ -1224,6 +1531,62 @@ function productionLikeRuntimeFromSpreadsheet(spreadsheet, overrides = {}) {
   });
 }
 
+function sequenceIdGenerator() {
+  const counters = {};
+  function next(prefix) {
+    counters[prefix] = (counters[prefix] || 0) + 1;
+    return `${prefix}-${String(counters[prefix]).padStart(3, '0')}`;
+  }
+  return {
+    attendanceId: () => next('AST'),
+    communicationId: () => next('COM'),
+    convocationId: () => next('CON'),
+    detailId: (studentId) => `DET-${studentId}`,
+    matchId: () => next('PAR'),
+    operationId: () => next('OP'),
+    participationId: () => next('PRT'),
+    sessionId: () => next('SES')
+  };
+}
+
+function e2eStudents() {
+  const positions = [
+    ['PO', 'DEF'], ['PO', 'DEF'],
+    ['DEF', 'MED'], ['DEF', 'MED'], ['DEF', 'MED'], ['DEF', 'MED'], ['DEF', 'MED'], ['DEF', 'MED'],
+    ['MED', 'DEF'], ['MED', 'DEF'], ['MED', 'DEF'], ['MED', 'DEF'], ['MED', 'DEF'], ['MED', 'DEF'],
+    ['DEL', 'MED'], ['DEL', 'MED'], ['DEL', 'MED'], ['DEL', 'MED'], ['DEL', 'MED'], ['DEL', 'MED']
+  ];
+  return positions.map((pair, index) => student({
+    ALUMNO_ID: `ALU-${String(index + 1).padStart(3, '0')}`,
+    NOMBRE: `Alumno${String(index + 1).padStart(2, '0')}`,
+    APELLIDOS: `Ficticio${String(index + 1).padStart(2, '0')}`,
+    POSICION_PRINCIPAL: pair[0],
+    POSICION_SECUNDARIA: pair[1],
+    NIVEL: 'A1'
+  }));
+}
+
+function e2eTutors(students) {
+  return students.map((row, index) => tutor({
+    TUTOR_ID: `TUT-${String(index + 1).padStart(3, '0')}`,
+    ALUMNO_ID: row.ALUMNO_ID,
+    EMAIL: `tutor-${String(index + 1).padStart(2, '0')}@example.invalid`
+  }));
+}
+
+function selectedDetails(spreadsheet, convocationId) {
+  return createSheetRepository({ sheet: spreadsheet.sheets.CONVOCATORIA_DETALLE, headers: CONVOCATION_DETAIL_HEADERS })
+    .getAll()
+    .filter((row) => row.CONVOCATORIA_ID === convocationId && row.SELECCIONADO_FINAL === true);
+}
+
+function countPositions(details) {
+  return details.reduce((counts, row) => {
+    counts[row.POSICION_ASIGNADA] = (counts[row.POSICION_ASIGNADA] || 0) + 1;
+    return counts;
+  }, {});
+}
+
 function assertPanelSafe(value, seen = new Set()) {
   if (value instanceof Date) assert.fail('Date instance crossed panel boundary');
   if (typeof value === 'function') assert.fail('Function crossed panel boundary');
@@ -1237,6 +1600,139 @@ function assertPanelSafe(value, seen = new Set()) {
     seen.delete(value);
   }
 }
+
+test('P14_END_TO_END_FAKE_RUNTIME_TEST', () => {
+  const spreadsheet = fakeSpreadsheet();
+  const idGenerator = sequenceIdGenerator();
+  const students = e2eStudents();
+  const sentMessages = [];
+  setupOperationalSheets(spreadsheet, setupSheetWithHeaders);
+  appendRecords(spreadsheet.sheets.CONFIG, CONFIG_HEADERS, completeConfigRows());
+  appendRecords(spreadsheet.sheets.ALUMNOS, STUDENT_HEADERS, students);
+  appendRecords(spreadsheet.sheets.TUTORES, TUTOR_HEADERS, e2eTutors(students));
+
+  const runtime = productionLikeRuntimeFromSpreadsheet(spreadsheet, {
+    clock: { now: () => new Date('2026-02-03T08:00:00Z') },
+    environment: { getSpreadsheetId: () => 'fake-sheet', getExternalMailEnabled: () => true },
+    idGenerator,
+    mailAdapter: { send(message) { sentMessages.push(message); } }
+  });
+
+  assert.equal(runtime.queries.verifyConfigReady().ready, true, 'P14_E2E_CONFIG_READY_ASSERT');
+
+  const trainingSession = runtime.commands.createSession({
+    TIPO: 'ENTRENAMIENTO',
+    FECHA: '2026-02-03',
+    HORA_INICIO: '08:00',
+    HORA_FIN: '09:00',
+    COMPETENCIA: 'GENERAL'
+  }, { operationId: 'OP-E2E-TRAINING', actor: 'coach' });
+  students.forEach((row, index) => {
+    runtime.commands.createAttendance({
+      sesionId: trainingSession.SESION_ID,
+      alumnoId: row.ALUMNO_ID,
+      estado: index === 0 ? 'F' : (index % 3 === 0 ? 'R' : 'A')
+    });
+  });
+  assert.equal(runtime.queries.getPanelAttendance(trainingSession.SESION_ID).rows.filter((row) => row.estadoActual).length, 20, 'P14_E2E_ATTENDANCE_ASSERT');
+
+  const absence = runtime.queries.getAttendances().filter((row) => row.estado === 'F')[0];
+  const absenceReplay = runtime.commands.resolveAbsence(absence.asistenciaId, 'FJ', { operationId: 'OP-E2E-ABSENCE', actor: 'coach', reason: 'motivo ficticio' });
+  assert.equal(absenceReplay.attendance.ESTADO, 'FJ', 'P14_E2E_ABSENCE_ASSERT');
+
+  const matchRow = runtime.commands.createMatch({
+    COMPETENCIA: 'A',
+    JORNADA: 'J1',
+    RIVAL: 'Rival Ficticio',
+    FECHA: '2026-02-10',
+    HORA_CITACION: '08:00',
+    HORA_PARTIDO: '09:00',
+    SEDE: 'Cancha Ficticia',
+    LOCAL_VISITANTE: 'LOCAL',
+    DURACION_MINUTOS: 60,
+    UNIFORME: 'Blanco',
+    INDICACIONES: 'Llegar puntual',
+    OBSERVACIONES: ''
+  }, { operationId: 'OP-E2E-MATCH', actor: 'coach' });
+  const matchSession = runtime.commands.createSession({
+    TIPO: 'PARTIDO',
+    FECHA: '2026-02-10',
+    HORA_INICIO: '09:00',
+    HORA_FIN: '10:00',
+    COMPETENCIA: 'A',
+    PARTIDO_ID: matchRow.PARTIDO_ID
+  }, { operationId: 'OP-E2E-MATCH-SESSION', actor: 'coach' });
+  students.forEach((row) => {
+    runtime.commands.createAttendance({ sesionId: matchSession.SESION_ID, alumnoId: row.ALUMNO_ID, estado: 'A' });
+  });
+
+  const generated = runtime.commands.generateConvocation(matchRow.PARTIDO_ID, 'coach');
+  const convocationId = generated.convocation.CONVOCATORIA_ID;
+  assert.equal(generated.convocation.TOTAL_OBJETIVO, 18);
+  assert.equal(generated.details.filter((row) => row.SELECCIONADO_FINAL).length, 18, 'P14_E2E_CONVOCATION_18_ASSERT');
+  let counts = countPositions(generated.details.filter((row) => row.SELECCIONADO_FINAL));
+  assert.equal(counts.PO >= 1 && counts.DEF >= 4 && counts.MED >= 4 && counts.DEL >= 3, true, 'P14_E2E_POSITION_MINIMA_ASSERT');
+
+  const selectedDel = generated.details.find((row) => row.SELECCIONADO_FINAL && row.POSICION_ASIGNADA === 'DEL');
+  const unselectedDel = generated.details.find((row) => !row.SELECCIONADO_FINAL && row.POSICION_PRINCIPAL_SNAPSHOT === 'DEL');
+  runtime.commands.setFinalSelection(convocationId, unselectedDel.ALUMNO_ID, true, 'swap ficticio', { operationId: 'OP-E2E-SELECT-IN', actor: 'coach' });
+  const deselected = runtime.commands.setFinalSelection(convocationId, selectedDel.ALUMNO_ID, false, 'swap ficticio', { operationId: 'OP-E2E-SELECT-OUT', actor: 'coach' });
+  assert.equal(deselected.MOTIVO_CAMBIO, 'swap ficticio', 'P14_E2E_MANUAL_CHANGE_ASSERT');
+  counts = countPositions(selectedDetails(spreadsheet, convocationId));
+  assert.equal(counts.PO >= 1 && counts.DEF >= 4 && counts.MED >= 4 && counts.DEL >= 3, true, 'P14_E2E_POSITION_MINIMA_ASSERT');
+
+  const approved = runtime.commands.approveConvocation(convocationId, 'coach', { operationId: 'OP-E2E-APPROVE' });
+  assert.equal(approved.ESTADO, 'APROBADA', 'P14_E2E_APPROVED_ASSERT');
+
+  const communications = runtime.commands.generateConvocationCommunications(convocationId);
+  assert.equal(communications.created.length, 18, 'P14_E2E_COMMUNICATION_ASSERT');
+  const sendResults = runtime.commands.sendPendingCommunications({ operationId: 'OP-E2E-SEND' });
+  assert.equal(sendResults.length, 18, 'P14_E2E_COMMUNICATION_ASSERT');
+  assert.equal(sentMessages.length, 18, 'P14_E2E_COMMUNICATION_ASSERT');
+  assert.equal(runtime.queries.getCommunications().every((row) => row.ESTADO === 'ENVIADO'), true, 'P14_E2E_COMMUNICATION_ASSERT');
+
+  const played = runtime.commands.markMatchPlayed(matchRow.PARTIDO_ID, { golesFavor: 2, golesContra: 1 }, 'coach', { operationId: 'OP-E2E-PLAYED' });
+  assert.equal(played.ESTADO, 'JUGADO');
+
+  selectedDetails(spreadsheet, convocationId).forEach((row, index) => {
+    runtime.commands.createParticipation({
+      PARTIDO_ID: matchRow.PARTIDO_ID,
+      ALUMNO_ID: row.ALUMNO_ID,
+      CONVOCATORIA_ID: convocationId,
+      ASISTIO: true,
+      ASISTENCIA_ESTADO: 'A',
+      CONDICION_INICIAL: index < 11 ? 'TITULAR' : 'SUPLENTE',
+      MINUTOS_JUGADOS: index < 11 ? 60 : 15,
+      GOLES: 0,
+      AMARILLAS: 0,
+      ROJAS: 0,
+      CALIFICACION: 5,
+      OBSERVACIONES: ''
+    }, { operationId: `OP-E2E-PARTICIPATION-${index + 1}`, actor: 'coach' });
+  });
+  assert.equal(runtime.queries.getParticipations().filter((row) => row.PARTIDO_ID === matchRow.PARTIDO_ID).length, 18, 'P14_E2E_PARTICIPATION_18_ASSERT');
+  assert.equal(runtime.queries.validateMatchParticipationReadiness(matchRow.PARTIDO_ID).ready, true, 'P14_E2E_READINESS_ASSERT');
+
+  assert.equal(runtime.queries.getPanelDashboard().upcomingMatches.length, 0);
+  assert.equal(runtime.queries.getPanelAttendance(trainingSession.SESION_ID).rows.length, 20);
+  assert.equal(runtime.queries.getPanelConvocation(convocationId).details.length, 20);
+  assert.equal(runtime.queries.getPanelParticipation(matchRow.PARTIDO_ID).rows.length, 18);
+
+  const auditText = JSON.stringify(runtime.queries.getEvents());
+  assert.equal(auditText.includes('@example.invalid'), false, 'P14_E2E_AUDIT_PRIVACY_ASSERT');
+  assert.equal(/(?:\+?\d[\s.-]?){10,}/.test(auditText), false, 'P14_E2E_AUDIT_PRIVACY_ASSERT');
+  assert.equal(/medic|lesion/i.test(auditText), false, 'P14_E2E_AUDIT_PRIVACY_ASSERT');
+
+  const attendanceRowsBeforeReplay = JSON.stringify(spreadsheet.sheets.ASISTENCIAS.rows);
+  const absenceIdempotent = runtime.commands.resolveAbsence(absence.asistenciaId, 'FJ', { operationId: 'OP-E2E-ABSENCE', actor: 'coach', reason: 'motivo ficticio' });
+  assert.equal(absenceIdempotent.idempotent, true, 'P14_E2E_IDEMPOTENCY_ASSERT');
+  assert.equal(JSON.stringify(spreadsheet.sheets.ASISTENCIAS.rows), attendanceRowsBeforeReplay, 'P14_E2E_IDEMPOTENCY_ASSERT');
+
+  const matchRowsBeforeReplay = JSON.stringify(spreadsheet.sheets.PARTIDOS.rows);
+  const playedIdempotent = runtime.commands.markMatchPlayed(matchRow.PARTIDO_ID, { golesFavor: 2, golesContra: 1 }, 'coach', { operationId: 'OP-E2E-PLAYED' });
+  assert.equal(playedIdempotent.idempotent, true, 'P14_E2E_IDEMPOTENCY_ASSERT');
+  assert.equal(JSON.stringify(spreadsheet.sheets.PARTIDOS.rows), matchRowsBeforeReplay, 'P14_E2E_IDEMPOTENCY_ASSERT');
+});
 
 test('APPS_SCRIPT_CONFIG_REPOSITORY_CONTRACT_TEST', () => {
   const spreadsheet = fakeSpreadsheet();
