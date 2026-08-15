@@ -26,6 +26,19 @@ function createAppRenderer(dependencies) {
     return value === undefined || value === null || value === '' ? '-' : value;
   }
 
+  function pairOrDash(left, right) {
+    return valueOrDash(left) + ' / ' + valueOrDash(right);
+  }
+
+  function selectedCompetition() {
+    return state.selectedCompetition || 'ALL';
+  }
+
+  function competitionMatches(value) {
+    var selected = selectedCompetition();
+    return selected === 'ALL' || value === selected || value === 'GENERAL';
+  }
+
   function routeMeta(routeName) {
     return routes.filter(function(route) { return route[0] === routeName; })[0] || routes[0];
   }
@@ -70,7 +83,7 @@ function createAppRenderer(dependencies) {
     return '<section class="screen dashboard-screen">' +
       '<div class="kpi-grid">' +
       kpi('Sesion actual / proxima', (dashboard.currentSession && dashboard.currentSession.sesionId) || (dashboard.nextSession && dashboard.nextSession.sesionId), 'Agenda') +
-      kpi('Asistencia', ((dashboard.attendanceSummary || {}).captured) + ' / ' + ((dashboard.attendanceSummary || {}).expected), 'capturados / esperados', 'success') +
+      kpi('Asistencia', pairOrDash((dashboard.attendanceSummary || {}).captured, (dashboard.attendanceSummary || {}).expected), 'capturados / esperados', 'success') +
       kpi('Faltas pendientes', dashboard.pendingAbsences, 'por resolver', 'danger') +
       kpi('Proximo partido A', dashboard.nextMatchA && dashboard.nextMatchA.rival, dashboard.nextMatchA && dashboard.nextMatchA.fecha) +
       kpi('Proximo partido B', dashboard.nextMatchB && dashboard.nextMatchB.rival, dashboard.nextMatchB && dashboard.nextMatchB.fecha) +
@@ -79,7 +92,7 @@ function createAppRenderer(dependencies) {
       kpi('Alumnos activos', activeStudents, 'plantilla') +
       '</div>' +
       '<div class="section-grid">' +
-      '<section class="panel"><h3>Proximos partidos</h3>' + renderMatchList(dashboard.upcomingMatches || []) + '</section>' +
+      '<section class="panel"><h3>Proximos partidos</h3>' + renderMatchList((dashboard.upcomingMatches || []).filter(function(match) { return competitionMatches(match.competencia); })) + '</section>' +
       '<section class="panel"><h3>Acciones rapidas</h3><div class="quick-actions"><button data-route="attendance">Tomar asistencia</button><button data-route="convocations">Ver convocatorias</button><button data-route="matches">Ver partidos</button></div></section>' +
       '<section class="panel panel--wide"><h3>Alertas</h3>' + (alerts.length ? '<ul class="alert-list">' + alerts.map(function(alert) { return '<li>' + esc(alert.code || alert) + '</li>'; }).join('') + '</ul>' : emptyState('Sin alertas operativas')) + '</section>' +
       '</div></section>';
@@ -127,7 +140,7 @@ function createAppRenderer(dependencies) {
   }
 
   function selectedSessionId() {
-    var sessions = (state.referenceData && state.referenceData.openSessions) || [];
+    var sessions = ((state.referenceData && state.referenceData.openSessions) || []).filter(function(session) { return competitionMatches(session.competencia); });
     return state.selectedSessionId || (state.attendance && state.attendance.sessionId) || (sessions[0] && sessions[0].sesionId) || '';
   }
 
@@ -146,7 +159,7 @@ function createAppRenderer(dependencies) {
 
   function renderSessionSelector() {
     var selected = selectedSessionId();
-    var sessions = (state.referenceData && state.referenceData.openSessions) || [];
+    var sessions = ((state.referenceData && state.referenceData.openSessions) || []).filter(function(session) { return competitionMatches(session.competencia); });
     if (!sessions.length) return emptyState('Sin sesiones abiertas');
     return '<select id="app-attendance-session">' + sessions.map(function(session) {
       return '<option value="' + esc(session.sesionId) + '"' + (session.sesionId === selected ? ' selected' : '') + '>' + esc([session.sesionId, session.competencia, session.fecha].filter(Boolean).join(' | ')) + '</option>';
@@ -186,75 +199,142 @@ function createAppRenderer(dependencies) {
   }
 
   function selectedMatchId() {
-    var matches = (state.referenceData && state.referenceData.programmedMatches) || [];
+    var matches = programmedMatches();
     return state.selectedProgrammedMatchId || (matches[0] && matches[0].partidoId) || '';
   }
 
   function selectedMatch() {
     var id = selectedMatchId();
-    return ((state.referenceData && state.referenceData.programmedMatches) || []).filter(function(match) { return match.partidoId === id; })[0] || null;
+    return programmedMatches().filter(function(match) { return match.partidoId === id; })[0] || null;
+  }
+
+  function programmedMatches() {
+    return ((state.referenceData && state.referenceData.programmedMatches) || []).filter(function(match) {
+      return competitionMatches(match.competencia);
+    });
+  }
+
+  function activeConvocationRecord() {
+    var match = selectedMatch();
+    return match ? findConvocationForMatch(match.partidoId) : null;
+  }
+
+  function convocationStatus() {
+    return (activeConvocationRecord() && activeConvocationRecord().ESTADO) || 'SIN_PROPUESTA';
+  }
+
+  function isAuthoritativeStatus(status) {
+    return status === 'APROBADA' || status === 'ENVIADA' || status === 'CERRADA';
   }
 
   function renderConvocations() {
     var match = selectedMatch();
-    var existing = match ? findConvocationForMatch(match.partidoId) : null;
+    var existing = activeConvocationRecord();
+    var status = (existing && existing.ESTADO) || 'SIN_PROPUESTA';
     var convocation = state.convocation || { details: [] };
-    var details = convocation.details || [];
+    var details = filteredConvocationDetails(convocation.details || []);
     var selected = details.filter(function(row) { return row.seleccionadoFinal === true; });
     var target = existing && existing.TOTAL_OBJETIVO !== undefined ? existing.TOTAL_OBJETIVO : valueOrDash(existing && existing.totalObjetivo);
     var eligible = details.filter(function(row) { return row.ELEGIBILITY_STATUS === 'ELIGIBLE'; }).length;
     var rotation = details.filter(function(row) { return row.prioridadRotacion === true; }).length;
     return '<section class="screen convocation-screen">' +
-      '<div class="toolbar">' + renderMatchSelector() + '<button class="primary" data-action="convocation-generate" data-match-id="' + esc(match && match.partidoId) + '"' + (existing ? ' disabled' : '') + '>Nueva / Generar propuesta</button></div>' +
+      '<div class="toolbar">' + renderMatchSelector() + '<button class="primary" data-action="convocation-generate" data-match-id="' + esc(match && match.partidoId) + '"' + (!match || existing || state.convocationGeneratePending ? ' disabled' : '') + '>Nueva / Generar propuesta</button></div>' +
       '<div class="kpi-grid kpi-grid--five">' +
       kpi('Proximo partido', match && match.rival, match && [match.fecha, match.horaPartido, match.sede].filter(Boolean).join(' | ')) +
       kpi('Jugadores elegibles', eligible + ' / ' + details.length, 'evaluados') +
       kpi('Prioridad de rotacion', rotation, 'jugadores') +
-      kpi('Cobertura de posiciones', positionCoverage(details), 'snapshots') +
+      kpi('Cobertura de posiciones', positionCoverage(convocation.details || [], existing), 'snapshots') +
       kpi('Convocatoria', selected.length + ' / ' + valueOrDash(target), 'seleccionados') +
-      '</div>' + renderStepper(existing) +
+      '</div>' + renderStepper(status) +
       '<div class="convocation-layout"><main class="convocation-main">' + renderConvocationFilters() + renderConvocationTable(details, convocation.convocationId || convocationId(existing)) + '</main><aside class="side-panel">' + renderMatchSummary(match) + renderConvocationActions(convocation.convocationId || convocationId(existing)) + '</aside></div></section>';
   }
 
   function renderMatchSelector() {
     var selected = selectedMatchId();
-    var matches = (state.referenceData && state.referenceData.programmedMatches) || [];
+    var matches = programmedMatches();
     if (!matches.length) return emptyState('Sin partidos programados');
     return '<select id="app-convocation-match">' + matches.map(function(match) {
       return '<option value="' + esc(match.partidoId) + '"' + (match.partidoId === selected ? ' selected' : '') + '>' + esc([match.competencia, match.rival, match.fecha].filter(Boolean).join(' | ')) + '</option>';
     }).join('') + '</select>';
   }
 
-  function positionCoverage(details) {
+  function positionCoverage(details, existing) {
+    var minima = {
+      PO: existing && existing.MIN_PORTEROS_SNAPSHOT,
+      DEF: existing && existing.MIN_DEFENSAS_SNAPSHOT,
+      MED: existing && existing.MIN_MEDIOS_SNAPSHOT,
+      DEL: existing && existing.MIN_DELANTEROS_SNAPSHOT
+    };
     var coverage = {};
     details.filter(function(row) { return row.seleccionadoFinal === true; }).forEach(function(row) {
       var position = row.posicionAsignada || row.posicionPrincipal;
       if (position) coverage[position] = (coverage[position] || 0) + 1;
     });
-    return Object.keys(coverage).sort().map(function(position) { return position + ' ' + coverage[position]; }).join(' | ') || '-';
+    if (['PO', 'DEF', 'MED', 'DEL'].every(function(position) { return minima[position] === undefined || minima[position] === null || minima[position] === ''; })) {
+      return '-';
+    }
+    return ['PO', 'DEF', 'MED', 'DEL'].map(function(position) {
+      return position + ' ' + (coverage[position] || 0) + '/' + valueOrDash(minima[position]);
+    }).join(' | ');
   }
 
-  function renderStepper(existing) {
-    var stateName = existing && existing.ESTADO || 'SIN_PROPUESTA';
-    return '<ol class="stepper"><li class="is-done">Propuesta generada</li><li class="' + (stateName === 'PROPUESTA' || stateName === 'BORRADOR' ? 'is-active' : '') + '">Revision del entrenador</li><li class="' + (['APROBADA', 'ENVIADA', 'CERRADA'].indexOf(stateName) !== -1 ? 'is-done' : '') + '">Convocatoria aprobada</li><li>Comunicaciones</li><li>Partido</li></ol>';
+  function stepClass(index, status) {
+    var doneUntil = 0;
+    var active = 1;
+    if (status === 'BORRADOR' || status === 'PROPUESTA') { doneUntil = 1; active = 2; }
+    if (status === 'APROBADA') { doneUntil = 3; active = 4; }
+    if (status === 'ENVIADA') { doneUntil = 4; active = 5; }
+    if (status === 'CERRADA') { doneUntil = 5; active = 0; }
+    if (index <= doneUntil) return 'is-done';
+    if (index === active) return 'is-active';
+    return '';
+  }
+
+  function renderStepper(status) {
+    var steps = ['Propuesta generada', 'Revision del entrenador', 'Convocatoria aprobada', 'Comunicaciones', 'Partido'];
+    return '<ol class="stepper">' + steps.map(function(label, index) {
+      return '<li class="' + stepClass(index + 1, status || 'SIN_PROPUESTA') + '">' + esc(label) + '</li>';
+    }).join('') + '</ol>';
   }
 
   function renderConvocationFilters() {
-    return '<div class="filters"><input data-convocation-filter="search" placeholder="Buscar jugador">' +
-      select('convocation-selected', [['ALL', 'Seleccionados / Todos'], ['SELECTED', 'Seleccionados']], 'ALL') +
-      select('convocation-position', [['ALL', 'Posicion'], ['PO', 'PO'], ['DEF', 'DEF'], ['MED', 'MED'], ['DEL', 'DEL']], 'ALL') +
-      select('convocation-priority', [['ALL', 'Prioridad'], ['YES', 'PRIORIDAD']], 'ALL') +
-      select('convocation-eligibility', [['ALL', 'Elegibilidad'], ['ELIGIBLE', 'Elegible'], ['INELIGIBLE', 'No elegible'], ['PENDING', 'Pendiente']], 'ALL') +
-      select('convocation-level', [['ALL', 'Nivel'], ['A1', 'A1'], ['A2', 'A2'], ['B1', 'B1'], ['B2', 'B2']], 'ALL') + '</div>';
+    var filters = state.convocationFilters || {};
+    return '<div class="filters"><input data-convocation-filter="search" placeholder="Buscar jugador" value="' + esc(filters.search || '') + '">' +
+      convocationSelect('selected', [['ALL', 'Seleccionados / Todos'], ['SELECTED', 'Seleccionados']], filters.selected || 'ALL') +
+      convocationSelect('position', [['ALL', 'Posicion'], ['PO', 'PO'], ['DEF', 'DEF'], ['MED', 'MED'], ['DEL', 'DEL']], filters.position || 'ALL') +
+      convocationSelect('priority', [['ALL', 'Prioridad'], ['YES', 'PRIORIDAD']], filters.priority || 'ALL') +
+      convocationSelect('eligibility', [['ALL', 'Elegibilidad'], ['ELIGIBLE', 'Elegible'], ['INELIGIBLE', 'No elegible'], ['PENDING', 'Pendiente']], filters.eligibility || 'ALL') +
+      convocationSelect('level', [['ALL', 'Nivel'], ['A1', 'A1'], ['A2', 'A2'], ['B1', 'B1'], ['B2', 'B2']], filters.level || 'ALL') + '</div>';
+  }
+
+  function convocationSelect(name, values, selected) {
+    return '<select data-convocation-filter="' + esc(name) + '">' + values.map(function(item) {
+      return '<option value="' + esc(item[0]) + '"' + (item[0] === selected ? ' selected' : '') + '>' + esc(item[1]) + '</option>';
+    }).join('') + '</select>';
+  }
+
+  function filteredConvocationDetails(details) {
+    var filters = state.convocationFilters || {};
+    return details.filter(function(row) {
+      var name = String(row.nombre || '').toLowerCase();
+      if (filters.search && name.indexOf(String(filters.search).toLowerCase()) === -1) return false;
+      if (filters.selected === 'SELECTED' && row.seleccionadoFinal !== true) return false;
+      if (filters.position && filters.position !== 'ALL' && row.posicionPrincipal !== filters.position && row.posicionSecundaria !== filters.position && row.posicionAsignada !== filters.position) return false;
+      if (filters.priority === 'YES' && row.prioridadRotacion !== true) return false;
+      if (filters.eligibility && filters.eligibility !== 'ALL' && row.ELEGIBILITY_STATUS !== filters.eligibility) return false;
+      if (filters.level && filters.level !== 'ALL' && row.nivel !== filters.level) return false;
+      return true;
+    });
   }
 
   function renderConvocationTable(details, activeConvocationId) {
     if (!details.length) return emptyState('Selecciona un partido con propuesta existente o genera una propuesta cuando corresponda');
+    var readonly = isAuthoritativeStatus(convocationStatus());
     return '<div class="table-wrap"><table id="app-convocation-table"><thead><tr><th>Jugador</th><th>Nivel</th><th>Posicion</th><th>Rotacion</th><th>Asistencia</th><th>Elegibilidad</th><th>Seleccion</th><th>Posicion asignada</th><th>Motivo</th></tr></thead><tbody>' +
       details.map(function(row) {
-        var disabled = row.ELEGIBILITY_STATUS === 'PENDING' || row.ELEGIBILITY_STATUS === 'INELIGIBLE';
+        var disabled = readonly || row.ELEGIBILITY_STATUS === 'PENDING' || row.ELEGIBILITY_STATUS === 'INELIGIBLE';
         var positions = [row.posicionPrincipal, row.posicionSecundaria].filter(Boolean);
-        return '<tr><td>' + esc(row.nombre) + '</td><td>' + badge(row.nivel, 'level') + '</td><td>' + esc([row.posicionPrincipal, row.posicionSecundaria].filter(Boolean).join(' / ')) + '</td><td>' + (row.prioridadRotacion ? badge('PRIORIDAD', 'warning') + ' ' : '') + esc(valueOrDash(row.rotacionAntes)) + '</td><td>' + esc(valueOrDash(row.puntajeAsistencia)) + '</td><td>' + badge(eligibilityLabel(row.ELEGIBILITY_STATUS), 'eligibility') + (row.MOTIVO_NO_ELEGIBLE ? '<span class="muted">' + esc(row.MOTIVO_NO_ELEGIBLE) + '</span>' : '') + '</td><td><input type="checkbox" data-action="convocation-selection" data-convocation-id="' + esc(activeConvocationId) + '" data-student-id="' + esc(row.ALUMNO_ID) + '"' + (row.seleccionadoFinal ? ' checked' : '') + (disabled ? ' disabled' : '') + '></td><td><select data-action="convocation-position" data-convocation-id="' + esc(activeConvocationId) + '" data-student-id="' + esc(row.ALUMNO_ID) + '"' + (disabled ? ' disabled' : '') + '>' + positions.map(function(position) { return '<option value="' + esc(position) + '"' + (position === row.posicionAsignada ? ' selected' : '') + '>' + esc(position) + '</option>'; }).join('') + '</select></td><td><input class="convocation-reason" data-student-id="' + esc(row.ALUMNO_ID) + '" placeholder="Motivo" value="' + esc(row.motivoCambio || '') + '"></td></tr>';
+        return '<tr><td>' + esc(row.nombre) + '</td><td>' + badge(row.nivel, 'level') + '</td><td>' + esc([row.posicionPrincipal, row.posicionSecundaria].filter(Boolean).join(' / ')) + '</td><td>' + (row.prioridadRotacion ? badge('PRIORIDAD', 'warning') + ' ' : '') + esc(valueOrDash(row.rotacionAntes)) + '</td><td>' + esc(valueOrDash(row.puntajeAsistencia)) + '</td><td>' + badge(eligibilityLabel(row.ELEGIBILITY_STATUS), 'eligibility') + (row.MOTIVO_NO_ELEGIBLE ? '<span class="muted">' + esc(row.MOTIVO_NO_ELEGIBLE) + '</span>' : '') + '</td><td><input type="checkbox" data-action="convocation-selection" data-convocation-id="' + esc(activeConvocationId) + '" data-student-id="' + esc(row.ALUMNO_ID) + '"' + (row.seleccionadoFinal ? ' checked' : '') + (disabled ? ' disabled' : '') + '></td><td><select data-action="convocation-position" data-convocation-id="' + esc(activeConvocationId) + '" data-student-id="' + esc(row.ALUMNO_ID) + '"' + (disabled ? ' disabled' : '') + '>' + positions.map(function(position) { return '<option value="' + esc(position) + '"' + (position === row.posicionAsignada ? ' selected' : '') + '>' + esc(position) + '</option>'; }).join('') + '</select></td><td><input class="convocation-reason" data-student-id="' + esc(row.ALUMNO_ID) + '" placeholder="Motivo" value="' + esc(row.motivoCambio || '') + '"' + (readonly ? ' disabled' : '') + '></td></tr>';
       }).join('') + '</tbody></table></div><p class="legend">A1 A2 B1 B2</p>';
   }
 
@@ -273,7 +353,11 @@ function createAppRenderer(dependencies) {
 
   function renderConvocationActions(activeConvocationId) {
     var capabilities = (state.referenceData && state.referenceData.runtimeCapabilities) || {};
-    return '<section class="panel"><h3>Acciones</h3><label>Aprobado por<input id="app-approval-actor" autocomplete="off"></label><button class="primary" data-action="convocation-approve" data-convocation-id="' + esc(activeConvocationId || '') + '"' + (activeConvocationId ? '' : ' disabled') + '>Aprobar convocatoria</button><button data-action="communication-prepare" data-convocation-id="' + esc(activeConvocationId || '') + '"' + (activeConvocationId ? '' : ' disabled') + '>Preparar comunicaciones</button><button data-action="communication-send" ' + (capabilities.externalMailEnabled === true ? '' : 'disabled') + '>Enviar pendientes</button></section>';
+    var status = convocationStatus();
+    var canApprove = activeConvocationId && (status === 'PROPUESTA' || status === 'BORRADOR');
+    var canPrepare = activeConvocationId && status === 'APROBADA';
+    var canSend = activeConvocationId && capabilities.externalMailEnabled === true && (status === 'APROBADA' || status === 'ENVIADA');
+    return '<section class="panel"><h3>Acciones</h3><label>Aprobado por<input id="app-approval-actor" autocomplete="off"' + (canApprove ? '' : ' disabled') + '></label><button class="primary" data-action="convocation-approve" data-convocation-id="' + esc(activeConvocationId || '') + '"' + (canApprove ? '' : ' disabled') + '>Aprobar convocatoria</button><button data-action="communication-prepare" data-convocation-id="' + esc(activeConvocationId || '') + '"' + (canPrepare ? '' : ' disabled') + '>Preparar comunicaciones</button><button data-action="communication-send" ' + (canSend ? '' : 'disabled') + '>Enviar pendientes</button></section>';
   }
 
   function renderScaffold() {
@@ -351,6 +435,11 @@ function createAppRenderer(dependencies) {
         state.studentFilters[element.getAttribute('data-filter')] = element.value;
         render('students');
       }
+      if (element.getAttribute('data-convocation-filter')) {
+        state.convocationFilters = state.convocationFilters || {};
+        state.convocationFilters[element.getAttribute('data-convocation-filter')] = element.value;
+        render('convocations');
+      }
       if (element.getAttribute('data-action') === 'convocation-selection') {
         var reason = target.querySelector('.convocation-reason[data-student-id="' + element.getAttribute('data-student-id') + '"]');
         controller.setFinalSelection(element.getAttribute('data-convocation-id'), element.getAttribute('data-student-id'), element.checked, reason && reason.value);
@@ -358,6 +447,19 @@ function createAppRenderer(dependencies) {
       if (element.getAttribute('data-action') === 'convocation-position') {
         var positionReason = target.querySelector('.convocation-reason[data-student-id="' + element.getAttribute('data-student-id') + '"]');
         controller.assignPosition(element.getAttribute('data-convocation-id'), element.getAttribute('data-student-id'), element.value, positionReason && positionReason.value);
+      }
+    });
+    target.addEventListener('input', function(event) {
+      var element = event.target;
+      if (element.getAttribute && element.getAttribute('data-filter')) {
+        state.studentFilters = state.studentFilters || {};
+        state.studentFilters[element.getAttribute('data-filter')] = element.value;
+        render('students');
+      }
+      if (element.getAttribute && element.getAttribute('data-convocation-filter')) {
+        state.convocationFilters = state.convocationFilters || {};
+        state.convocationFilters[element.getAttribute('data-convocation-filter')] = element.value;
+        render('convocations');
       }
     });
   }
@@ -370,6 +472,7 @@ function createAppRenderer(dependencies) {
     render: render,
     renderAttendance: renderAttendance,
     renderConvocations: renderConvocations,
+    renderConvocationFilters: renderConvocationFilters,
     renderDashboard: renderDashboard,
     renderNavigation: renderNavigation,
     renderShell: renderShell,

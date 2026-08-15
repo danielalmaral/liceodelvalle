@@ -12,6 +12,22 @@
 | Comunicaciones | SCAFFOLDED |
 | Configuracion | SCAFFOLDED |
 
+## Corrective 01 Audit Closure
+
+| Hallazgo | Estado |
+| --- | --- |
+| Route hydration Asistencias | IMPLEMENTED |
+| Route hydration Convocatorias | IMPLEMENTED |
+| Stale response protection | IMPLEMENTED |
+| Generate in-flight guard | IMPLEMENTED |
+| Convocation filters | IMPLEMENTED |
+| Dynamic position minima snapshots | IMPLEMENTED |
+| Canonical stepper | IMPLEMENTED |
+| Authoritative readonly | IMPLEMENTED |
+| Action gating | IMPLEMENTED |
+| Global competition presentation filter | IMPLEMENTED |
+| Undefined/null render guard | IMPLEMENTED |
+
 ## Deferred
 
 - `BRAND_OFFICIAL_LOGO_ASSET_PENDING`
