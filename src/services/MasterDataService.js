@@ -39,6 +39,10 @@ function createMasterDataService(dependencies) {
       throw utils.createDomainError('TUTOR_STUDENT_FK', alumnoId);
     }
 
+    if (email && !utils.isValidEmail(email)) {
+      throw utils.createDomainError('TUTOR_EMAIL_INVALID', row.TUTOR_ID);
+    }
+
     if ((recibeAusencias || recibeConvocatorias) && !utils.isValidEmail(email)) {
       throw utils.createDomainError('TUTOR_EMAIL_REQUIRED', row.TUTOR_ID);
     }

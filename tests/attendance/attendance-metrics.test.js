@@ -5,6 +5,8 @@ const { createArrayRepository } = require('../../src/repositories/ArrayRepositor
 const { createConfigRepository } = require('../../src/repositories/ConfigRepository');
 require('../../src/config/ConfigSchema');
 require('../../src/domain/AttendanceContracts');
+require('../../src/domain/AttendanceConfigPolicy');
+require('../../src/domain/AttendanceSnapshotValidator');
 const { createConfigService } = require('../../src/config/ConfigService');
 const { createAttendanceFoundationService } = require('../../src/services/AttendanceFoundationService');
 const { createAttendanceMetricsService } = require('../../src/services/AttendanceMetricsService');
@@ -96,7 +98,7 @@ test('HISTORICAL_VALUE_SNAPSHOT_TEST keeps old retardo value after config change
 
 test('HISTORICAL_MAX_VALUE_SNAPSHOT_TEST keeps old max value after config changes', () => {
   const first = capture(config({ ASISTENCIA_VALOR: '1' })).createAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'R' });
-  const second = capture(config({ ASISTENCIA_VALOR: '2', RETARDO_VALOR: '0.75' })).createAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'R' });
+  const second = capture(config({ ASISTENCIA_VALOR: '2', FALTA_JUSTIFICADA_VALOR: '2', LESION_VALOR: '2', RETARDO_VALOR: '0.75' })).createAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'R' });
   assert.equal(first.VALOR_MAXIMO_APLICADO, 1);
   assert.equal(second.VALOR_MAXIMO_APLICADO, 2);
 });
@@ -105,4 +107,24 @@ test('DYNAMIC_CONFIG_NEW_EVENT_TEST new captures use current config values', () 
   const first = capture(config({ RETARDO_VALOR: '0.75' })).createAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'R' });
   const second = capture(config({ RETARDO_VALOR: '0.80' })).createAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'R' });
   assert.notEqual(first.VALOR_APLICADO, second.VALOR_APLICADO);
+});
+
+test('ATTENDANCE_FINALIZED_SNAPSHOT_REQUIRED_TEST rejects finalized missing snapshots', () => {
+  assert.throws(() => metrics([row('A', '', 1)]).getStudentMetrics('ALU-001'), /ATTENDANCE_FINALIZED_SNAPSHOT_REQUIRED/);
+});
+
+test('ATTENDANCE_PENDING_SNAPSHOT_NULL_TEST rejects pending F with snapshots', () => {
+  assert.throws(() => metrics([row('F', 0, 1)]).getStudentMetrics('ALU-001'), /ATTENDANCE_PENDING_SNAPSHOT_NOT_NULL/);
+});
+
+test('ATTENDANCE_SNAPSHOT_FINITE_TEST rejects NaN snapshots', () => {
+  assert.throws(() => metrics([row('A', 'abc', 1)]).getStudentMetrics('ALU-001'), /ATTENDANCE_CORRUPT_SNAPSHOT/);
+});
+
+test('ATTENDANCE_SNAPSHOT_RANGE_TEST rejects value greater than max', () => {
+  assert.throws(() => metrics([row('A', 2, 1)]).getStudentMetrics('ALU-001'), /ATTENDANCE_SNAPSHOT_RANGE/);
+});
+
+test('METRICS_CORRUPT_SNAPSHOT_FAIL_CLOSED_TEST rejects corrupt rows before computing', () => {
+  assert.throws(() => metrics([row('FI', 0, 0)]).getStudentMetrics('ALU-001'), /ATTENDANCE_CORRUPT_SNAPSHOT/);
 });

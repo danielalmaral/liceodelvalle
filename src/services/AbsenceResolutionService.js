@@ -43,21 +43,31 @@ function createAbsenceResolutionService(dependencies) {
       throw utils.createDomainError('ABSENCE_INVALID_TRANSITION', finalStatus);
     }
 
+    validateAttendanceConfigPolicy(configService, utils);
+
     if ((finalStatus === 'FJ' || finalStatus === 'LES') && record.LIMITE_JUSTIFICACION && now.getTime() > new Date(record.LIMITE_JUSTIFICACION).getTime()) {
       finalStatus = 'FI';
     }
 
     var snapshot = snapshotFor(finalStatus);
     var previous = record.ESTADO;
+    var nextRecord = {};
 
-    record.ESTADO = finalStatus;
-    record.VALOR_APLICADO = snapshot.value;
-    record.VALOR_MAXIMO_APLICADO = snapshot.max;
-    record.MODIFICADO_EN = now;
-    record.JUSTIFICACION = reason;
+    Object.keys(record).forEach(function(key) {
+      nextRecord[key] = record[key];
+    });
+
+    nextRecord.ESTADO = finalStatus;
+    nextRecord.VALOR_APLICADO = snapshot.value;
+    nextRecord.VALOR_MAXIMO_APLICADO = snapshot.max;
+    nextRecord.MODIFICADO_EN = now;
+    nextRecord.JUSTIFICACION = reason;
+
+    validateAttendanceSnapshot(nextRecord, utils);
+    attendanceRepository.updateById('ASISTENCIA_ID', attendanceId, nextRecord);
 
     return {
-      attendance: record,
+      attendance: nextRecord,
       audit: {
         attendanceId: attendanceId,
         previousStatus: previous,

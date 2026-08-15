@@ -7,6 +7,8 @@ const { createConfigRepository } = require('../../src/repositories/ConfigReposit
 require('../../src/config/ConfigSchema');
 const { createConfigService } = require('../../src/config/ConfigService');
 require('../../src/domain/AttendanceContracts');
+require('../../src/domain/AttendanceConfigPolicy');
+require('../../src/domain/AttendanceSnapshotValidator');
 const { setupAttendanceSheets } = require('../../src/config/AttendanceSetup');
 const { createAttendanceFoundationService } = require('../../src/services/AttendanceFoundationService');
 const { completeConfigRows } = require('../config/config-fixtures');
@@ -67,6 +69,10 @@ function service({ sessions = [session()], students = [student()], attendances =
     studentRepository: createArrayRepository(students),
     utils
   });
+}
+
+function repositoryRows(serviceRows) {
+  return serviceRows;
 }
 
 function fakeSheet(rows = []) {
@@ -138,6 +144,55 @@ test('ATTENDANCE_INITIAL_STATUS_TEST only accepts A R F for capture', () => {
 test('ATTENDANCE_CONFIG_SNAPSHOT_TEST snapshots A and R from CONFIG', () => {
   assert.deepEqual(service().createAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'A' }).VALOR_APLICADO, 1);
   assert.equal(service().createAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'R' }).VALOR_APLICADO, 0.75);
+});
+
+test('ATTENDANCE_CREATE_STUDENT_FK_TEST rejects create for missing student before write', () => {
+  const rows = [];
+  assert.throws(() => service({ attendances: rows }).createAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-404', estado: 'A' }), /ATTENDANCE_STUDENT_FK/);
+  assert.equal(rows.length, 0);
+});
+
+test('ATTENDANCE_CREATE_DUPLICATE_PAIR_TEST rejects duplicate SESION_ID ALUMNO_ID before write', () => {
+  const rows = [attendance()];
+  assert.throws(() => service({ attendances: rows }).createAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'A', asistenciaId: 'AST-002' }), /ATTENDANCE_DUPLICATE_SESSION_STUDENT/);
+  assert.equal(rows.length, 1);
+});
+
+test('ATTENDANCE_CREATE_ID_REQUIRED_TEST rejects missing generated id before write', () => {
+  const svc = createAttendanceFoundationService({
+    attendanceRepository: createArrayRepository([]),
+    clock: { now: () => new Date('2026-01-02T10:00:00Z') },
+    configService: config(),
+    idGenerator: {},
+    sessionRepository: createArrayRepository([session()]),
+    studentRepository: createArrayRepository([student()]),
+    utils
+  });
+
+  assert.throws(() => svc.createAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'A' }), /ATTENDANCE_ID_REQUIRED/);
+});
+
+test('ATTENDANCE_CREATE_ID_UNIQUENESS_TEST rejects duplicate ASISTENCIA_ID before write', () => {
+  const rows = [attendance()];
+  assert.throws(() => service({ attendances: rows, students: [student(), student({ ALUMNO_ID: 'ALU-002' })] }).createAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-002', estado: 'A', asistenciaId: 'AST-001' }), /ATTENDANCE_DUPLICATE_ID/);
+  assert.equal(rows.length, 1);
+});
+
+test('ATTENDANCE_EXPLICIT_PERSISTENCE_TEST createAttendance inserts into repository', () => {
+  const rows = [];
+  const created = service({ attendances: rows }).createAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'A' });
+  assert.equal(created.ASISTENCIA_ID, 'AST-NEW');
+  assert.equal(repositoryRows(rows).length, 1);
+});
+
+test('ATTENDANCE_RUNTIME_CONFIG_FAIL_CLOSED_TEST rejects invalid config before snapshot', () => {
+  assert.throws(() => service({ configService: config({ RETARDO_VALOR: '1.2' }) }).createAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'A' }), /ATTENDANCE_CONFIG_RELATION_INVALID/);
+});
+
+test('ATTENDANCE_CONFIG_NO_PARTIAL_WRITE_TEST leaves repository unchanged when config is invalid', () => {
+  const rows = [];
+  assert.throws(() => service({ attendances: rows, configService: config({ RETARDO_VALOR: '1.2' }) }).createAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'A' }), /ATTENDANCE_CONFIG_RELATION_INVALID/);
+  assert.equal(rows.length, 0);
 });
 
 test('ATTENDANCE_PENDING_NO_SCORE_TEST keeps F without score snapshots', () => {

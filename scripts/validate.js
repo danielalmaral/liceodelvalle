@@ -27,6 +27,8 @@ const requiredPaths = [
   'src/config/AttendanceSetup.js',
   'src/config/MasterDataSetup.js',
   'src/domain/AttendanceContracts.js',
+  'src/domain/AttendanceConfigPolicy.js',
+  'src/domain/AttendanceSnapshotValidator.js',
   'src/domain/MasterDataContracts.js',
   'src/domain/AttendanceRules.js',
   'src/domain/EligibilityRules.js',
@@ -203,27 +205,31 @@ function scanPii() {
 function scanConfigHardcodedRules() {
   const findings = [];
   const files = walk(path.join(root, 'src')).filter((file) => path.extname(file) === '.js');
-  const forbiddenRuntimeDefaults = [
-    /\bCONVOCADOS_[AB]\s*=\s*\d+/,
-    /\bRETARDO_VALOR\s*=\s*\d/,
-    /\bASISTENCIA_VALOR\s*=\s*\d/,
-    /\bFALTA_(?:INJUSTIFICADA|JUSTIFICADA)_VALOR\s*=\s*\d/,
-    /\bLESION_VALOR\s*=\s*\d/,
-    /\bHORAS_JUSTIFICACION\s*=\s*\d+/
-  ];
+  const schemaText = readText(path.join(root, 'src/config/ConfigSchema.js'));
+  const configKeys = Array.from(schemaText.matchAll(/key:\s*'([^']+)'/g)).map((match) => match[1]);
 
   for (const file of files) {
+    const rel = relative(file);
+
+    if (rel === 'src/config/ConfigSchema.js') {
+      continue;
+    }
+
     const content = readText(file);
 
-    for (const pattern of forbiddenRuntimeDefaults) {
-      if (pattern.test(content)) {
-        findings.push(relative(file));
-        break;
-      }
+    if (detectConfigHardcodedRules(content, configKeys)) {
+        findings.push(rel);
     }
   }
 
   return findings;
+}
+
+function detectConfigHardcodedRules(content, configKeys) {
+  return configKeys.some((key) => {
+    const pattern = new RegExp(`\\b${key}\\b\\s*(?:=|:)\\s*(?:['"]?\\d|true\\b|false\\b|['"][^'"]+['"])`, 'i');
+    return pattern.test(content);
+  });
 }
 
 function scanGasRuntimeCompatibility() {
@@ -287,5 +293,7 @@ if (require.main === module) {
 
 module.exports = {
   assertValidBranchName,
+  detectConfigHardcodedRules,
+  scanConfigHardcodedRules,
   scanGasRuntimeCompatibility
 };

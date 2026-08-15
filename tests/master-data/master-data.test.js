@@ -126,6 +126,11 @@ test('TUTOR_EMAIL_REQUIREMENT_TEST requires email for selected communications', 
   assert.equal(service([student()], [tutor({ EMAIL: '', RECIBE_AUSENCIAS: false, RECIBE_CONVOCATORIAS: false })]).getTutors()[0].email, '');
 });
 
+test('TUTOR_OPTIONAL_EMAIL_FORMAT_TEST validates optional email when present', () => {
+  assert.throws(() => service([student()], [tutor({ EMAIL: 'bad-email', RECIBE_AUSENCIAS: false, RECIBE_CONVOCATORIAS: false })]).getTutors(), /TUTOR_EMAIL_INVALID/);
+  assert.equal(service([student()], [tutor({ EMAIL: 'optional@example.invalid', RECIBE_AUSENCIAS: false, RECIBE_CONVOCATORIAS: false })]).getTutors()[0].email, 'optional@example.invalid');
+});
+
 test('COMMUNICATION_READINESS_TEST reports readiness without blocking persistence', () => {
   const readiness = service([student()], [tutor({ RECIBE_AUSENCIAS: true, RECIBE_CONVOCATORIAS: false })]).getCommunicationReadiness()[0];
   assert.equal(readiness.ausenciasReady, true);

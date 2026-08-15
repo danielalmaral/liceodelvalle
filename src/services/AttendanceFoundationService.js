@@ -7,6 +7,12 @@ function createAttendanceFoundationService(dependencies) {
   var idGenerator = dependencies.idGenerator || {};
   var clock = dependencies.clock || { now: function() { return new Date(); } };
 
+  function ensureWritableRepository() {
+    if (!attendanceRepository || typeof attendanceRepository.insert !== 'function') {
+      throw utils.createDomainError('REPOSITORY_WRITE_REQUIRED', 'ASISTENCIAS');
+    }
+  }
+
   function normalizeSession(row) {
     var fecha = utils.parseDateValue(row.FECHA, 'FECHA');
     var start = row.HORA_INICIO ? new Date('1970-01-01T' + row.HORA_INICIO) : null;
@@ -105,6 +111,7 @@ function createAttendanceFoundationService(dependencies) {
   }
 
   function createAttendance(input) {
+    ensureWritableRepository();
     var sessions = getSessions();
     var session = sessions.filter(function(candidate) { return candidate.sesionId === input.sesionId; })[0];
     var estado = utils.assertOneOf(input.estado, ATTENDANCE_STATUS.INITIAL, 'ESTADO');
@@ -112,14 +119,37 @@ function createAttendanceFoundationService(dependencies) {
     var value = null;
     var max = null;
     var limiteJustificacion = null;
+    var students = studentIdSet();
+    var existingAttendances = attendanceRepository.getAll();
+    var asistenciaId = input.asistenciaId || (idGenerator.attendanceId ? idGenerator.attendanceId() : '');
 
     if (!session) {
       throw utils.createDomainError('ATTENDANCE_SESSION_FK', input.sesionId);
     }
 
+    if (!students[input.alumnoId]) {
+      throw utils.createDomainError('ATTENDANCE_STUDENT_FK', input.alumnoId);
+    }
+
     if (session.estado === 'CERRADA') {
       throw utils.createDomainError('SESSION_CLOSED', input.sesionId);
     }
+
+    if (!asistenciaId || String(asistenciaId).trim() === '') {
+      throw utils.createDomainError('ATTENDANCE_ID_REQUIRED', 'ASISTENCIA_ID');
+    }
+
+    existingAttendances.forEach(function(record) {
+      if (record.SESION_ID === input.sesionId && record.ALUMNO_ID === input.alumnoId) {
+        throw utils.createDomainError('ATTENDANCE_DUPLICATE_SESSION_STUDENT', input.sesionId + '|' + input.alumnoId);
+      }
+
+      if (record.ASISTENCIA_ID === asistenciaId) {
+        throw utils.createDomainError('ATTENDANCE_DUPLICATE_ID', asistenciaId);
+      }
+    });
+
+    validateAttendanceConfigPolicy(configService, utils);
 
     if (estado === 'A') {
       value = configService.getDecimal('ASISTENCIA_VALOR');
@@ -131,8 +161,8 @@ function createAttendanceFoundationService(dependencies) {
       limiteJustificacion = new Date(registradoEn.getTime() + configService.getInteger('HORAS_JUSTIFICACION') * 60 * 60 * 1000);
     }
 
-    return {
-      ASISTENCIA_ID: input.asistenciaId || (idGenerator.attendanceId ? idGenerator.attendanceId() : ''),
+    var record = {
+      ASISTENCIA_ID: asistenciaId,
       SESION_ID: input.sesionId,
       ALUMNO_ID: input.alumnoId,
       ESTADO: estado,
@@ -146,6 +176,10 @@ function createAttendanceFoundationService(dependencies) {
       COMUNICACION_ID: '',
       OBSERVACIONES: ''
     };
+
+    validateAttendanceSnapshot(record, utils);
+
+    return attendanceRepository.insert(record);
   }
 
   return {
