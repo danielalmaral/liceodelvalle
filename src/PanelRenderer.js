@@ -130,7 +130,8 @@ function createPanelRenderer(dependencies) {
       '<button data-action="convocation-generate" data-match-id="' + esc(selectedMatch) + '"' + (existing ? ' disabled' : '') + '>Generar propuesta</button>',
       existing ? '<p class="muted">Propuesta existente</p>' : '<p class="muted">Sin propuesta</p>',
       renderConvocationDetails(convocation),
-      '<button data-action="convocation-approve" data-convocation-id="' + esc(convocation.convocationId || '') + '">Aprobar convocatoria</button>',
+      '<label>Aprobado por<input id="convocation-approval-actor" aria-label="Aprobado por" autocomplete="off"></label>',
+      '<button data-action="convocation-approve" data-convocation-id="' + esc(convocation.convocationId || '') + '"' + (convocation.convocationId ? '' : ' disabled') + '>Aprobar convocatoria</button>',
       '<button data-action="communication-prepare" data-convocation-id="' + esc(convocation.convocationId || '') + '">Preparar comunicaciones</button>',
       '<button id="send-pending" data-action="communication-send" ' + (capabilities.externalMailEnabled === true ? '' : 'disabled') + '>Enviar pendientes</button>'
     ].join('');
@@ -336,7 +337,14 @@ function createPanelRenderer(dependencies) {
       return controller.assignPosition(action.convocationId, action.studentId, action.position, action.reason || '');
     }
     if (action.type === 'approveConvocation') {
-      return controller.approveConvocation(action.convocationId);
+      var actor = String(action.actor || '').trim();
+      if (!actor) {
+        throw new Error('PANEL_APPROVAL_ACTOR_REQUIRED');
+      }
+      if (!action.convocationId) {
+        return null;
+      }
+      return controller.approveConvocation(action.convocationId, actor);
     }
     if (action.type === 'prepareCommunications') {
       return controller.prepareConvocationCommunications(action.convocationId);

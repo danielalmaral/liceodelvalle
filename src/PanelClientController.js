@@ -122,8 +122,8 @@ function createPanelClientController(dependencies) {
     return rpc('commandAssignPosition', [convocationId, studentId, position, reason || ''], 'convocationWrite', render.convocationWrite);
   }
 
-  function approveConvocation(convocationId) {
-    return rpc('commandApproveConvocation', [convocationId], 'convocationWrite', render.convocationWrite);
+  function approveConvocation(convocationId, actor) {
+    return rpc('commandApproveConvocation', [convocationId, actor], 'convocationWrite', render.convocationWrite);
   }
 
   function prepareConvocationCommunications(convocationId) {

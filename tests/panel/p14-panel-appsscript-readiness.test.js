@@ -959,6 +959,30 @@ test('PANEL_HANDLER_OPERATION_ID_SERVER_GENERATED_TEST', () => {
   assert.equal(String(handlers.commandApproveConvocation).includes('operationId'), true);
 });
 
+test('PANEL_HANDLER_APPROVAL_ACTOR_PASSTHROUGH_TEST', () => {
+  let observed = null;
+  handlers.setPanelRuntimeFactoryForTest(() => ({
+    commands: {
+      approveConvocation(convocationId, actor, options) {
+        observed = { convocationId, actor, options };
+        return { CONVOCATORIA_ID: convocationId, APROBADA_POR: actor };
+      }
+    },
+    runtime: { idGenerator: { operationId: () => 'SERVER_GENERATED' } }
+  }));
+  try {
+    const response = handlers.commandApproveConvocation('CON-001', 'COACH_TEST');
+    assert.equal(response.ok, true);
+    assert.deepEqual(observed, {
+      convocationId: 'CON-001',
+      actor: 'COACH_TEST',
+      options: { operationId: 'SERVER_GENERATED' }
+    });
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
 test('PANEL_HANDLER_ERROR_SANITIZATION_TEST', () => {
   const response = handlers.safePanelResponse(() => { throw new Error('ERROR: sensitive'); });
   assert.deepEqual(response, { ok: false, code: 'ERROR', message: 'No se pudo completar la operacion solicitada.' });
@@ -1402,6 +1426,24 @@ test('PANEL_UI_EXTERNAL_MAIL_DISABLED_TEST', () => {
   assert.equal(html.includes('id="send-pending" data-action="communication-send" disabled'), true);
 });
 
+test('PANEL_UI_APPROVAL_ACTOR_INPUT_TEST', () => {
+  const html = createPanelRenderer({
+    state: { referenceData: { runtimeCapabilities: { externalMailEnabled: false }, programmedMatches: [] }, convocation: { convocationId: 'CON-001', details: [] } },
+    controller: {}
+  }).renderConvocations();
+  assert.equal(html.includes('Aprobado por'), true);
+  assert.equal(html.includes('id="convocation-approval-actor"'), true);
+  assert.equal(html.includes('aria-label="Aprobado por"'), true);
+  assert.equal(html.includes('autocomplete="off"'), true);
+});
+
+test('PANEL_UI_APPROVAL_EVENT_READS_ACTOR_INPUT_TEST', () => {
+  const html = getLdvPanelHtml();
+  assert.equal(html.includes('document.getElementById("convocation-approval-actor")'), true);
+  assert.equal(html.includes('actor:approvalActor&&approvalActor.value'), true);
+  assert.equal(html.includes('PANEL_APPROVAL_ACTOR_REQUIRED'), true);
+});
+
 test('PANEL_UI_CONVOCATION_GENERATE_TEST', () => {
   assert.equal(getLdvPanelHtml().includes('Generar propuesta'), true);
 });
@@ -1553,10 +1595,30 @@ test('PANEL_UI_CONVOCATION_APPROVE_PREPARE_SEND_TEST', () => {
   const { calls, renderer } = panelRendererHarness({ referenceData: { runtimeCapabilities: { externalMailEnabled: true }, programmedMatches: [] } });
   const html = renderer.renderConvocations();
   assert.equal(html.includes('id="send-pending" data-action="communication-send" >Enviar pendientes</button>'), true);
-  renderer.dispatch({ type: 'approveConvocation', convocationId: 'CON-001' });
+  renderer.dispatch({ type: 'approveConvocation', convocationId: 'CON-001', actor: 'COACH_TEST' });
   renderer.dispatch({ type: 'prepareCommunications', convocationId: 'CON-001' });
   renderer.dispatch({ type: 'sendPendingCommunications' });
   assert.deepEqual(calls.slice(-3).map((call) => call.name), ['approveConvocation', 'prepareConvocationCommunications', 'sendPendingCommunications']);
+});
+
+test('PANEL_UI_APPROVAL_ACTOR_REQUIRED_TEST', () => {
+  const { calls, renderer } = panelRendererHarness();
+  assert.throws(() => renderer.dispatch({ type: 'approveConvocation', convocationId: 'CON-001', actor: '' }), /PANEL_APPROVAL_ACTOR_REQUIRED/);
+  assert.equal(calls.some((call) => call.name === 'approveConvocation'), false);
+});
+
+test('PANEL_UI_APPROVAL_ACTOR_TRIM_TEST', () => {
+  const { calls, renderer } = panelRendererHarness();
+  renderer.dispatch({ type: 'approveConvocation', convocationId: 'CON-001', actor: '  COACH_TEST  ' });
+  assert.deepEqual(calls.at(-1), { name: 'approveConvocation', args: ['CON-001', 'COACH_TEST'] });
+});
+
+test('PANEL_UI_APPROVAL_NO_EMPTY_ACTOR_RPC_TEST', () => {
+  [undefined, null, '', '   '].forEach((actor) => {
+    const ui = panelUiAsyncHarness();
+    assert.throws(() => ui.renderer.dispatch({ type: 'approveConvocation', convocationId: 'CON-001', actor }), /PANEL_APPROVAL_ACTOR_REQUIRED/);
+    assert.equal(ui.calls.some((call) => call.name === 'commandApproveConvocation'), false);
+  });
 });
 
 test('PANEL_UI_POSTMATCH_SELECTOR_AND_SELECTED_ROWS_TEST', () => {
@@ -1861,7 +1923,7 @@ test('PANEL_CLIENT_UI_INTEGRATION_FLOW_TEST', () => {
   ui.succeed(ui.calls.find((call) => call.name === 'commandGenerateConvocation'), { CONVOCATORIA_ID: 'CON-001', PARTIDO_ID: 'PAR-001' });
   ui.renderer.dispatch({ type: 'setFinalSelection', convocationId: 'CON-001', studentId: 'ALU-001', selected: true, reason: 'motivo' });
   ui.renderer.dispatch({ type: 'assignPosition', convocationId: 'CON-001', studentId: 'ALU-001', position: 'MED', reason: 'motivo' });
-  ui.renderer.dispatch({ type: 'approveConvocation', convocationId: 'CON-001' });
+  ui.renderer.dispatch({ type: 'approveConvocation', convocationId: 'CON-001', actor: 'COACH_TEST' });
   ui.renderer.dispatch({ type: 'prepareCommunications', convocationId: 'CON-001' });
   ui.load('postmatch');
   ui.succeed(ui.calls.filter((call) => call.name === 'getPanelReferenceData').at(-1), ui.state.referenceData);
@@ -1879,6 +1941,7 @@ test('PANEL_CLIENT_UI_INTEGRATION_FLOW_TEST', () => {
   ['getPanelReferenceData', 'getPanelAttendance', 'commandCreateAttendance', 'commandResolveAbsence', 'commandCreateMatch', 'commandUpdateMatch', 'commandMarkMatchPlayed', 'commandCancelMatch', 'commandGenerateConvocation', 'commandSetFinalSelection', 'commandAssignPosition', 'commandApproveConvocation', 'commandPrepareConvocationCommunications', 'getPanelParticipation', 'commandSaveParticipation', 'getPanelDashboard'].forEach((name) => {
     assert.equal(names.includes(name), true, name);
   });
+  assert.deepEqual(ui.calls.find((call) => call.name === 'commandApproveConvocation').args, ['CON-001', 'COACH_TEST']);
   assert.equal(ui.calls.some((call) => call.args && call.args.includes('')), false);
 });
 
@@ -2331,6 +2394,11 @@ test('PANEL_REFERENCE_DATA_PII_TEST', () => {
   assert.equal(JSON.stringify(data).includes('family@example.invalid'), false);
 });
 
+test('PANEL_APPROVAL_BACKEND_STILL_FAILS_CLOSED_TEST', () => {
+  const runtime = createAppsScriptRuntime(runtimeOptions());
+  assert.throws(() => runtime.commands.approveConvocation('CON-001', ''), /CONVOCATION_APPROVAL_ACTOR_REQUIRED/);
+});
+
 function captureRpcController() {
   const calls = [];
   const controller = createPanelClientController({
@@ -2440,8 +2508,14 @@ test('PANEL_CLIENT_POSITION_RPC_TEST', () => {
 
 test('PANEL_CLIENT_APPROVAL_RPC_TEST', () => {
   const { calls, controller } = captureRpcController();
-  controller.approveConvocation('CON-001');
+  controller.approveConvocation('CON-001', 'COACH_TEST');
   assert.equal(calls[0].name, 'commandApproveConvocation');
+});
+
+test('PANEL_CLIENT_APPROVAL_ACTOR_RPC_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.approveConvocation('CON-001', 'COACH_TEST');
+  assert.deepEqual(calls[0], { name: 'commandApproveConvocation', args: ['CON-001', 'COACH_TEST'], hasSuccess: true, hasFailure: true });
 });
 
 test('PANEL_CLIENT_PREPARE_COMMUNICATIONS_RPC_TEST', () => {
