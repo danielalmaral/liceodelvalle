@@ -4,6 +4,7 @@ const utils = require('../../src/common/DomainUtils');
 const { createArrayRepository } = require('../../src/repositories/ArrayRepository');
 require('../../src/domain/AuditContracts');
 const { createAuditService } = require('../../src/services/AuditService');
+const { createOperationalCommandService } = require('../../src/services/OperationalCommandService');
 
 function service(rows = [], overrides = {}) {
   return createAuditService({
@@ -91,4 +92,167 @@ test('AUDIT_FAILURE_AFTER_WRITE_TEST reports failed audit after domain write', (
   });
   assert.throws(() => audit.appendAfterWrite(() => { wrote = true; return true; }, event()), /AUDIT_PERSISTENCE_FAILED_AFTER_WRITE/);
   assert.equal(wrote, true);
+});
+
+function auditedCommandState(overrides = {}) {
+  const attendanceRows = [{ ASISTENCIA_ID: 'AST-001', ESTADO: 'F' }];
+  const detailRows = [{ DETALLE_ID: 'DET-001', CONVOCATORIA_ID: 'CON-001', ALUMNO_ID: 'ALU-001', SELECCIONADO_FINAL: true, POSICION_ASIGNADA: 'DEF' }];
+  const participationRows = [{ PARTICIPACION_ID: 'PRT-001', MINUTOS_JUGADOS: 0 }];
+  const auditRows = [];
+  const auditRepository = overrides.auditRepository || createArrayRepository(auditRows);
+  const services = {
+    absenceResolutionService: {
+      resolveAbsence(id, state) {
+        attendanceRows[0].ESTADO = state;
+        return { attendance: attendanceRows[0] };
+      },
+      resolveExpiredAbsences() {
+        attendanceRows[0].ESTADO = 'FI';
+        return [{ attendance: attendanceRows[0] }];
+      }
+    },
+    auditService: createAuditService({ auditRepository, utils }),
+    communicationService: {
+      sendPendingCommunications() { return [{ communication: { COMUNICACION_ID: 'COM-001', ESTADO: 'ENVIADO' } }]; },
+      retryCommunication() { return { communication: { COMUNICACION_ID: 'COM-001', ESTADO: 'ERROR' } }; }
+    },
+    convocationService: {
+      approveConvocation() { return { CONVOCATORIA_ID: 'CON-001', ESTADO: 'APROBADA' }; },
+      assignPlayerPosition() { detailRows[0].POSICION_ASIGNADA = 'MED'; return detailRows[0]; },
+      setFinalSelection() { detailRows[0].SELECCIONADO_FINAL = false; return detailRows[0]; }
+    },
+    participationService: {
+      updateParticipation(id, updates) { Object.assign(participationRows[0], updates); return participationRows[0]; }
+    }
+  };
+  return {
+    auditRows,
+    command: createOperationalCommandService({
+      idGenerator: { operationId: (prefix) => `${prefix}-001` },
+      repositories: {
+        attendanceRepository: createArrayRepository(attendanceRows),
+        detailRepository: createArrayRepository(detailRows),
+        participationRepository: createArrayRepository(participationRows)
+      },
+      services,
+      utils
+    })
+  };
+}
+
+test('AUDIT_E2E_ABSENCE_FJ_TEST records audit through absence command', () => {
+  const state = auditedCommandState();
+  state.command.resolveAbsence('AST-001', 'FJ', { operationId: 'OP-FJ' });
+  assert.equal(state.auditRows[0].VALOR_NUEVO, 'FJ');
+});
+
+test('AUDIT_E2E_ABSENCE_FI_TEST records expired FI through command', () => {
+  const state = auditedCommandState();
+  state.command.resolveExpiredAbsences(new Date(), { operationId: 'OP-FI' });
+  assert.equal(state.auditRows[0].VALOR_NUEVO, 'FI');
+});
+
+test('AUDIT_E2E_ABSENCE_LES_TEST records LES through command', () => {
+  const state = auditedCommandState();
+  state.command.resolveAbsence('AST-001', 'LES', { operationId: 'OP-LES' });
+  assert.equal(state.auditRows[0].VALOR_NUEVO, 'LES');
+});
+
+test('AUDIT_E2E_CONVOCATION_SELECTION_TEST records selection command', () => {
+  const state = auditedCommandState();
+  state.command.setFinalSelection('CON-001', 'ALU-001', false, 'Decision', { operationId: 'OP-SEL' });
+  assert.equal(state.auditRows[0].CAMPO, 'SELECCIONADO_FINAL');
+});
+
+test('AUDIT_E2E_CONVOCATION_POSITION_TEST records position command', () => {
+  const state = auditedCommandState();
+  state.command.assignPlayerPosition('CON-001', 'ALU-001', 'MED', 'Decision', { operationId: 'OP-POS' });
+  assert.equal(state.auditRows[0].CAMPO, 'POSICION_ASIGNADA');
+});
+
+test('AUDIT_E2E_CONVOCATION_APPROVAL_TEST records approval command', () => {
+  const state = auditedCommandState();
+  state.command.approveConvocation('CON-001', 'coach', { operationId: 'OP-APP' });
+  assert.equal(state.auditRows[0].ACCION, 'APROBACION');
+});
+
+test('AUDIT_E2E_PARTICIPATION_UPDATE_TEST records participation update command', () => {
+  const state = auditedCommandState();
+  state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 30 }, { operationId: 'OP-PRT' });
+  assert.equal(state.auditRows[0].ENTIDAD, 'PARTICIPACION_PARTIDO');
+});
+
+test('AUDIT_E2E_COMMUNICATION_SENT_TEST records communication sent command', () => {
+  const state = auditedCommandState();
+  state.command.sendPendingCommunications({ operationId: 'OP-COM' });
+  assert.equal(state.auditRows[0].VALOR_NUEVO, 'ENVIADO');
+});
+
+test('AUDIT_E2E_COMMUNICATION_ERROR_TEST records communication retry command', () => {
+  const state = auditedCommandState();
+  state.command.retryCommunication('COM-001', { operationId: 'OP-COM-ERR' });
+  assert.equal(state.auditRows[0].VALOR_NUEVO, 'ERROR');
+});
+
+test('AUDIT_NO_EVENT_ON_DOMAIN_FAILURE_TEST does not append if command write fails', () => {
+  const state = auditedCommandState();
+  state.command = createOperationalCommandService({
+    repositories: {
+      attendanceRepository: createArrayRepository([{ ASISTENCIA_ID: 'AST-001', ESTADO: 'F' }]),
+      detailRepository: createArrayRepository([]),
+      participationRepository: createArrayRepository([])
+    },
+    services: {
+      absenceResolutionService: { resolveAbsence() { throw new Error('domain failed'); } },
+      auditService: createAuditService({ auditRepository: createArrayRepository(state.auditRows), utils })
+    },
+    utils
+  });
+  assert.throws(() => state.command.resolveAbsence('AST-001', 'FJ'), /domain failed/);
+  assert.equal(state.auditRows.length, 0);
+});
+
+test('AUDIT_FAILURE_AFTER_WRITE_E2E_TEST fails when audit append fails after write', () => {
+  const state = auditedCommandState({
+    auditRepository: {
+      getAll() { return []; },
+      insert() { throw new Error('audit failed'); }
+    }
+  });
+  assert.throws(() => state.command.resolveAbsence('AST-001', 'FJ'), /AUDIT_PERSISTENCE_FAILED_AFTER_WRITE/);
+});
+
+test('AUDIT_SAME_OPERATION_RETRY_IDEMPOTENT_TEST reuses event id for same operation', () => {
+  const state = auditedCommandState();
+  state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 10 }, { operationId: 'OP-SAME' });
+  state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 20 }, { operationId: 'OP-SAME' });
+  assert.equal(state.auditRows.length, 1);
+});
+
+test('AUDIT_TWO_MANUAL_CHANGES_SAME_FIELD_TEST creates distinct events for distinct operations', () => {
+  const state = auditedCommandState();
+  state.command.setFinalSelection('CON-001', 'ALU-001', false, 'Decision', { operationId: 'OP-1' });
+  state.command.setFinalSelection('CON-001', 'ALU-001', true, 'Decision', { operationId: 'OP-2' });
+  assert.equal(state.auditRows.length, 2);
+});
+
+test('AUDIT_TWO_PARTICIPATION_UPDATES_SAME_FIELD_TEST creates distinct participation events', () => {
+  const state = auditedCommandState();
+  state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 10 }, { operationId: 'OP-1' });
+  state.command.updateParticipation('PRT-001', { MINUTOS_JUGADOS: 20 }, { operationId: 'OP-2' });
+  assert.equal(state.auditRows.length, 2);
+});
+
+test('AUDIT_DISTINCT_EVENT_ID_TEST creates distinct event ids for distinct operations', () => {
+  const state = auditedCommandState();
+  state.command.setFinalSelection('CON-001', 'ALU-001', false, 'Decision', { operationId: 'OP-1' });
+  state.command.setFinalSelection('CON-001', 'ALU-001', true, 'Decision', { operationId: 'OP-2' });
+  assert.notEqual(state.auditRows[0].EVENTO_ID, state.auditRows[1].EVENTO_ID);
+});
+
+test('AUDIT_MULTIPLE_COMMUNICATION_ERROR_ATTEMPTS_TEST creates one event per distinct error operation', () => {
+  const state = auditedCommandState();
+  state.command.retryCommunication('COM-001', { operationId: 'OP-1' });
+  state.command.retryCommunication('COM-001', { operationId: 'OP-2' });
+  assert.equal(state.auditRows.length, 2);
 });

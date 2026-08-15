@@ -27,6 +27,10 @@ function createAuditService(dependencies) {
     return input.EVENTO_ID || input.eventId || (idGenerator.auditId ? idGenerator.auditId(input) : '');
   }
 
+  function operationId(input, fallback) {
+    return input.operationId || input.OPERATION_ID || (idGenerator.operationId ? idGenerator.operationId(input) : fallback);
+  }
+
   function normalizeEvent(input) {
     var id = eventId(input);
 
@@ -83,8 +87,9 @@ function createAuditService(dependencies) {
   }
 
   function recordAbsenceTransition(attendanceId, fromState, toState, actor, reason) {
+    var opId = operationId(arguments[5] || {}, 'ABSENCE-' + attendanceId + '-' + fromState + '-' + toState);
     return appendEvent({
-      EVENTO_ID: 'AUD-ASISTENCIA-' + attendanceId + '-' + fromState + '-' + toState,
+      EVENTO_ID: 'AUD-' + opId + '-ASISTENCIAS-TRANSICION_AUSENCIA',
       USUARIO: actor,
       ENTIDAD: 'ASISTENCIAS',
       ENTIDAD_ID: attendanceId,
@@ -97,8 +102,9 @@ function createAuditService(dependencies) {
   }
 
   function recordConvocationManualChange(detailId, field, beforeValue, afterValue, actor, reason) {
+    var opId = operationId(arguments[6] || {}, 'CONVOCATION-MANUAL-' + detailId + '-' + field);
     return appendEvent({
-      EVENTO_ID: 'AUD-CONVOCATORIA-DETALLE-' + detailId + '-' + field,
+      EVENTO_ID: 'AUD-' + opId + '-CONVOCATORIA_DETALLE-CAMBIO_MANUAL',
       USUARIO: actor,
       ENTIDAD: 'CONVOCATORIA_DETALLE',
       ENTIDAD_ID: detailId,
@@ -111,8 +117,9 @@ function createAuditService(dependencies) {
   }
 
   function recordConvocationApproval(convocationId, actor) {
+    var opId = operationId(arguments[2] || {}, 'CONVOCATION-APPROVAL-' + convocationId);
     return appendEvent({
-      EVENTO_ID: 'AUD-CONVOCATORIA-' + convocationId + '-APROBADA',
+      EVENTO_ID: 'AUD-' + opId + '-CONVOCATORIAS-APROBACION',
       USUARIO: actor,
       ENTIDAD: 'CONVOCATORIAS',
       ENTIDAD_ID: convocationId,
@@ -125,8 +132,9 @@ function createAuditService(dependencies) {
   }
 
   function recordParticipationUpdate(participationId, field, beforeValue, afterValue, actor) {
+    var opId = operationId(arguments[5] || {}, 'PARTICIPATION-' + participationId + '-' + field);
     return appendEvent({
-      EVENTO_ID: 'AUD-PARTICIPACION-' + participationId + '-' + field,
+      EVENTO_ID: 'AUD-' + opId + '-PARTICIPACION_PARTIDO-ACTUALIZACION',
       USUARIO: actor,
       ENTIDAD: 'PARTICIPACION_PARTIDO',
       ENTIDAD_ID: participationId,
@@ -139,8 +147,9 @@ function createAuditService(dependencies) {
   }
 
   function recordCommunicationState(communicationId, fromState, toState) {
+    var opId = operationId(arguments[3] || {}, 'COMMUNICATION-' + communicationId + '-' + toState);
     return appendEvent({
-      EVENTO_ID: 'AUD-COMUNICACION-' + communicationId + '-' + toState,
+      EVENTO_ID: 'AUD-' + opId + '-COMUNICACIONES-CAMBIO_ESTADO',
       USUARIO: 'SYSTEM',
       ENTIDAD: 'COMUNICACIONES',
       ENTIDAD_ID: communicationId,
