@@ -111,6 +111,7 @@ function createAttendanceFoundationService(dependencies) {
     var registradoEn = input.registradoEn || clock.now();
     var value = null;
     var max = null;
+    var limiteJustificacion = null;
 
     if (!session) {
       throw utils.createDomainError('ATTENDANCE_SESSION_FK', input.sesionId);
@@ -126,6 +127,8 @@ function createAttendanceFoundationService(dependencies) {
     } else if (estado === 'R') {
       value = configService.getDecimal('RETARDO_VALOR');
       max = configService.getDecimal('ASISTENCIA_VALOR');
+    } else if (estado === 'F') {
+      limiteJustificacion = new Date(registradoEn.getTime() + configService.getInteger('HORAS_JUSTIFICACION') * 60 * 60 * 1000);
     }
 
     return {
@@ -136,7 +139,7 @@ function createAttendanceFoundationService(dependencies) {
       VALOR_APLICADO: value,
       VALOR_MAXIMO_APLICADO: max,
       REGISTRADO_EN: registradoEn,
-      LIMITE_JUSTIFICACION: null,
+      LIMITE_JUSTIFICACION: limiteJustificacion,
       MODIFICADO_EN: registradoEn,
       JUSTIFICACION: '',
       AVISO_ENVIADO: false,
