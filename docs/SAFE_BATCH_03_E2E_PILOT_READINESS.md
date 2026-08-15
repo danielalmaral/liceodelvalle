@@ -3,7 +3,7 @@
 ## Scope
 
 - Phase: `LDV-PILOT-E2E-PILOT-READINESS-SAFE-BATCH-03`
-- Base SHA: `25d5744e38e34398248034abfe52ab32ee5d2f0a`
+- Base SHA: Safe Batch 02 certified stack base, short `25d5744`.
 - Branch: `safe-batch/e2e-pilot-readiness-03`
 - Purpose: close remaining product workflow gaps, certify local cross-module E2E behavior, and prepare the same P15 Apps Script Web App for controlled pilot smoke.
 
