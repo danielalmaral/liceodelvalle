@@ -232,18 +232,19 @@ function createAppRenderer(dependencies) {
     var existing = activeConvocationRecord();
     var status = (existing && existing.ESTADO) || 'SIN_PROPUESTA';
     var convocation = state.convocation || { details: [] };
-    var details = filteredConvocationDetails(convocation.details || []);
-    var selected = details.filter(function(row) { return row.seleccionadoFinal === true; });
+    var allDetails = convocation.details || [];
+    var details = filteredConvocationDetails(allDetails);
+    var selected = allDetails.filter(function(row) { return row.seleccionadoFinal === true; });
     var target = existing && existing.TOTAL_OBJETIVO !== undefined ? existing.TOTAL_OBJETIVO : valueOrDash(existing && existing.totalObjetivo);
-    var eligible = details.filter(function(row) { return row.ELEGIBILITY_STATUS === 'ELIGIBLE'; }).length;
-    var rotation = details.filter(function(row) { return row.prioridadRotacion === true; }).length;
+    var eligible = allDetails.filter(function(row) { return row.ELEGIBILITY_STATUS === 'ELIGIBLE'; }).length;
+    var rotation = allDetails.filter(function(row) { return row.prioridadRotacion === true; }).length;
     return '<section class="screen convocation-screen">' +
       '<div class="toolbar">' + renderMatchSelector() + '<button class="primary" data-action="convocation-generate" data-match-id="' + esc(match && match.partidoId) + '"' + (!match || existing || state.convocationGeneratePending ? ' disabled' : '') + '>Nueva / Generar propuesta</button></div>' +
       '<div class="kpi-grid kpi-grid--five">' +
       kpi('Proximo partido', match && match.rival, match && [match.fecha, match.horaPartido, match.sede].filter(Boolean).join(' | ')) +
-      kpi('Jugadores elegibles', eligible + ' / ' + details.length, 'evaluados') +
+      kpi('Jugadores elegibles', eligible + ' / ' + allDetails.length, 'evaluados') +
       kpi('Prioridad de rotacion', rotation, 'jugadores') +
-      kpi('Cobertura de posiciones', positionCoverage(convocation.details || [], existing), 'snapshots') +
+      kpi('Cobertura de posiciones', positionCoverage(allDetails, existing), 'snapshots') +
       kpi('Convocatoria', selected.length + ' / ' + valueOrDash(target), 'seleccionados') +
       '</div>' + renderStepper(status) +
       '<div class="convocation-layout"><main class="convocation-main">' + renderConvocationFilters() + renderConvocationTable(details, convocation.convocationId || convocationId(existing)) + '</main><aside class="side-panel">' + renderMatchSummary(match) + renderConvocationActions(convocation.convocationId || convocationId(existing)) + '</aside></div></section>';
@@ -394,12 +395,21 @@ function createAppRenderer(dependencies) {
   }
 
   function renderShell() {
-    return '<div class="ldv-app-shell"><aside class="app-sidebar"><div class="brand"><span class="brand-mark">LDV</span><strong>LICEO DEL VALLE</strong><small>FUTBOL</small></div><nav id="app-nav">' + renderNavigation() + '</nav><div class="operator">Operador deportivo</div></aside><div class="app-main"><header class="app-header"><div><p class="eyebrow">Liceo del Valle - Futbol</p><h1 id="app-title">Panel Principal</h1><p id="app-subtitle">Vista operativa del dia deportivo</p></div><div class="header-actions"><select id="app-competition"><option value="ALL">Todas</option><option value="A">Liga A</option><option value="B">Liga B</option></select></div></header><div id="app-error" class="error-banner" role="alert"></div><div id="app-feedback" class="feedback"></div><main id="app-content">' + screenHtml(state.activeRoute || 'dashboard') + '</main></div></div>';
+    return '<div class="ldv-app-shell"><aside class="app-sidebar"><div class="brand"><span class="brand-mark">LDV</span><strong>LICEO DEL VALLE</strong><small>FUTBOL</small></div><nav id="app-nav">' + renderNavigation() + '</nav><div class="operator">Operador deportivo</div></aside><div class="app-main"><header class="app-header"><div><p class="eyebrow">Liceo del Valle - Futbol</p><h1 id="app-title">Panel Principal</h1><p id="app-subtitle">Vista operativa del dia deportivo</p></div><div class="header-actions"><select id="app-competition"><option value="ALL"' + (selectedCompetition() === 'ALL' ? ' selected' : '') + '>Todas</option><option value="A"' + (selectedCompetition() === 'A' ? ' selected' : '') + '>Liga A</option><option value="B"' + (selectedCompetition() === 'B' ? ' selected' : '') + '>Liga B</option></select></div></header><div id="app-error" class="error-banner" role="alert"></div><div id="app-feedback" class="feedback"></div><main id="app-content">' + screenHtml(state.activeRoute || 'dashboard') + '</main></div></div>';
   }
 
   function attachEvents(root) {
     var target = root || doc;
     if (!target || typeof target.addEventListener !== 'function') return;
+    function controllerMethod(name) {
+      if (controller && typeof controller[name] === 'function') {
+        return controller[name];
+      }
+      if (typeof appController !== 'undefined' && appController && typeof appController[name] === 'function') {
+        return function() { return appController[name].apply(appController, arguments); };
+      }
+      return null;
+    }
     target.addEventListener('click', function(event) {
       var button = event.target;
       var route = button && button.getAttribute && button.getAttribute('data-route');
@@ -421,14 +431,11 @@ function createAppRenderer(dependencies) {
     target.addEventListener('change', function(event) {
       var element = event.target;
       if (element.id === 'app-competition') {
-        state.selectedCompetition = element.value;
-        render(state.activeRoute);
+        controllerMethod('setCompetition')(element.value);
       }
       if (element.id === 'app-attendance-session') controller.loadAttendance(element.value);
       if (element.id === 'app-convocation-match') {
-        state.selectedProgrammedMatchId = element.value;
-        var existing = findConvocationForMatch(element.value);
-        if (existing) controller.loadConvocation(convocationId(existing)); else render('convocations');
+        controllerMethod('selectProgrammedMatch')(element.value);
       }
       if (element.getAttribute('data-filter')) {
         state.studentFilters = state.studentFilters || {};

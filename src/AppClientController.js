@@ -81,8 +81,14 @@ function createAppClientController(dependencies) {
     return /^[A-Z][A-Z0-9_]*$/.test(code) ? message + ' [' + code + ']' : message;
   }
 
-  function onFailure(error) {
-    state.convocationGeneratePending = false;
+  function onFailure(error, options) {
+    options = options || {};
+    if (typeof options.isCurrent === 'function' && !options.isCurrent()) {
+      return;
+    }
+    if (options.clearGeneratePending === true) {
+      state.convocationGeneratePending = false;
+    }
     state.error = safeErrorMessage(error);
     if (typeof render.error === 'function') {
       render.error(state.error);
@@ -92,10 +98,14 @@ function createAppClientController(dependencies) {
     }
   }
 
-  function rpc(name, args, onSuccess) {
+  function rpc(name, args, onSuccess, options) {
+    options = options || {};
     return callServer(name, args || [], function(response) {
       if (!response || response.ok === false) {
-        onFailure(response);
+        onFailure(response, options);
+        return;
+      }
+      if (typeof options.isCurrent === 'function' && !options.isCurrent()) {
         return;
       }
       state.error = '';
@@ -105,7 +115,7 @@ function createAppClientController(dependencies) {
       if (typeof onSuccess === 'function') {
         onSuccess(response.data);
       }
-    }, onFailure);
+    }, function(error) { onFailure(error, options); });
   }
 
   function hydrateRoute(route, token) {
@@ -132,14 +142,13 @@ function createAppClientController(dependencies) {
       render.loading();
     }
     return rpc('getAppBootstrap', [], function(data) {
-      if (!isFresh(token)) {
-        return;
-      }
       state.bootstrap = data || {};
       state.dashboard = state.bootstrap.dashboard || {};
       state.referenceData = state.bootstrap.referenceData || {};
       state.students = state.bootstrap.students || [];
       hydrateRoute(state.activeRoute, token);
+    }, {
+      isCurrent: function() { return isFresh(token); }
     });
   }
 
@@ -173,9 +182,6 @@ function createAppClientController(dependencies) {
     }
     state.selectedSessionId = selected;
     return rpc('getPanelAttendance', [selected], function(data) {
-      if (!isFresh(token, 'attendance') || state.selectedSessionId !== selected) {
-        return;
-      }
       state.attendance = data || { rows: [] };
       state.loading = false;
       if (typeof render.route === 'function') {
@@ -184,6 +190,8 @@ function createAppClientController(dependencies) {
       if (typeof render.feedback === 'function') {
         render.feedback('');
       }
+    }, {
+      isCurrent: function() { return isFresh(token, 'attendance') && state.selectedSessionId === selected; }
     });
   }
 
@@ -222,15 +230,61 @@ function createAppClientController(dependencies) {
     }
     state.selectedConvocationId = convocationIdValue;
     return rpc('getPanelConvocation', [convocationIdValue], function(data) {
-      if (!isFresh(token, 'convocations') || state.selectedProgrammedMatchId !== expectedMatchId || state.selectedConvocationId !== convocationIdValue) {
-        return;
-      }
       state.convocation = data || { convocationId: '', details: [] };
       state.loading = false;
       if (typeof render.route === 'function') {
         render.route('convocations');
       }
+    }, {
+      isCurrent: function() {
+        return isFresh(token, 'convocations') &&
+          state.selectedProgrammedMatchId === expectedMatchId &&
+          state.selectedConvocationId === convocationIdValue;
+      }
     });
+  }
+
+  function selectProgrammedMatch(matchId) {
+    var token = nextEpoch('convocations');
+    var selected = validMatchId(matchId) || '';
+    var existing;
+    state.selectedProgrammedMatchId = selected;
+    state.loading = true;
+    if (!selected) {
+      state.selectedConvocationId = '';
+      state.convocation = { convocationId: '', details: [] };
+      state.loading = false;
+      if (typeof render.route === 'function') render.route('convocations');
+      return null;
+    }
+    existing = findConvocationForMatch(selected);
+    if (!existing || !convocationId(existing)) {
+      state.selectedConvocationId = '';
+      state.convocation = { convocationId: '', details: [] };
+      state.loading = false;
+      if (typeof render.route === 'function') render.route('convocations');
+      return null;
+    }
+    return loadConvocation(convocationId(existing), token, selected);
+  }
+
+  function setCompetition(value) {
+    var next = String(value || '').trim().toUpperCase();
+    if (next !== 'ALL' && next !== 'A' && next !== 'B') {
+      throw new Error('APP_COMPETITION_REJECTED');
+    }
+    nextEpoch(state.activeRoute || 'dashboard');
+    state.selectedCompetition = next;
+    if (!validSessionId(state.selectedSessionId)) {
+      state.selectedSessionId = '';
+      state.attendance = { rows: [] };
+    }
+    if (!validMatchId(state.selectedProgrammedMatchId)) {
+      state.selectedProgrammedMatchId = '';
+      state.selectedConvocationId = '';
+      state.convocation = { convocationId: '', details: [] };
+    }
+    return loadBootstrap(state.activeRoute || 'dashboard');
   }
 
   function markAttendance(sessionId, studentId, attendanceState) {
@@ -278,6 +332,8 @@ function createAppClientController(dependencies) {
         state.selectedConvocationId = newId;
       }
       loadBootstrap('convocations');
+    }, {
+      clearGeneratePending: true
     });
   }
 
@@ -332,7 +388,9 @@ function createAppClientController(dependencies) {
     prepareConvocationCommunications: prepareConvocationCommunications,
     resolveAbsence: resolveAbsence,
     route: route,
+    selectProgrammedMatch: selectProgrammedMatch,
     sendPendingCommunications: sendPendingCommunications,
+    setCompetition: setCompetition,
     setFinalSelection: setFinalSelection
   };
 }

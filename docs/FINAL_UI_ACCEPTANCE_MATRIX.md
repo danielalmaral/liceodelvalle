@@ -28,6 +28,17 @@
 | Global competition presentation filter | IMPLEMENTED |
 | Undefined/null render guard | IMPLEMENTED |
 
+## Corrective 02 Audit Closure
+
+| Hallazgo | Estado |
+| --- | --- |
+| Cambio a partido sin propuesta limpia estado anterior | IMPLEMENTED |
+| Selector global A/B rehidrata route activa | IMPLEMENTED |
+| Fallos stale ignorados sin error visible | IMPLEMENTED |
+| Guard de generacion aislado ante fallos no relacionados | IMPLEMENTED |
+| KPI de convocatoria invariantes ante filtros | IMPLEMENTED |
+| Cobertura de posiciones invariante ante filtros | IMPLEMENTED |
+
 ## Deferred
 
 - `BRAND_OFFICIAL_LOGO_ASSET_PENDING`

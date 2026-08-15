@@ -53,3 +53,9 @@ La auditoria externa detecto defectos de cierre funcional en hidratacion de ruta
 El correctivo mantiene el alcance del safe batch y no toca motor deportivo, repositorios, CONFIG, despliegue Google ni recursos P15. La app ahora hidrata automaticamente Asistencias y Convocatorias al entrar a la ruta, protege respuestas tardias por route/request epoch, bloquea doble click de generacion, refresca bootstrap despues de generar y deriva stepper/acciones exclusivamente del estado canonico de la convocatoria.
 
 Los filtros de Convocatorias usan `state.convocationFilters` y atributos `data-convocation-filter`, separados de `state.studentFilters`. La cobertura de posiciones usa snapshots de convocatoria `MIN_PORTEROS_SNAPSHOT`, `MIN_DEFENSAS_SNAPSHOT`, `MIN_MEDIOS_SNAPSHOT` y `MIN_DELANTEROS_SNAPSHOT`.
+
+## Corrective 02
+
+El segundo correctivo cierra consistencia de seleccion y fallos obsoletos. El cambio de partido programado queda bajo autoridad del controller con `selectProgrammedMatch(matchId)`, limpiando convocatoria anterior cuando el nuevo partido no tiene propuesta y cargando la convocatoria exacta cuando existe.
+
+El selector global de competencia queda bajo `setCompetition(value)`, con valores permitidos `ALL`, `A` y `B`; al cambiar rehidrata la ruta activa y descarta selecciones incompatibles. Los fallos stale de bootstrap, asistencia y convocatoria se ignoran simetricamente a los successes stale, y los KPI de convocatoria se calculan desde la convocatoria completa, no desde la tabla filtrada.
