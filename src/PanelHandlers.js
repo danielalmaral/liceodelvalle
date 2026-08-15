@@ -1,6 +1,53 @@
+function toPanelSerializable(value, seen) {
+  var activeSeen = seen || [];
+  var output;
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === 'function') {
+    throw new Error('PANEL_SERIALIZATION_FUNCTION_REJECTED');
+  }
+
+  if (typeof value !== 'object') {
+    throw new Error('PANEL_SERIALIZATION_TYPE_REJECTED');
+  }
+
+  if (activeSeen.indexOf(value) !== -1) {
+    throw new Error('PANEL_SERIALIZATION_CIRCULAR_REJECTED');
+  }
+
+  activeSeen.push(value);
+  if (Array.isArray(value)) {
+    output = value.map(function(item) {
+      var serialized = toPanelSerializable(item, activeSeen);
+      return serialized === undefined ? null : serialized;
+    });
+  } else {
+    output = {};
+    Object.keys(value).forEach(function(key) {
+      var serialized = toPanelSerializable(value[key], activeSeen);
+      if (serialized !== undefined) {
+        output[key] = serialized;
+      }
+    });
+  }
+  activeSeen.pop();
+  return output;
+}
+
 function safePanelResponse(callback) {
   try {
-    return { ok: true, data: callback() };
+    return { ok: true, data: toPanelSerializable(callback()) };
   } catch (error) {
     var rawCode = String(error && error.message ? error.message : 'PANEL_ERROR').split(':')[0];
     return {
@@ -15,7 +62,7 @@ function safePanelResponse(callback) {
 
 var panelRuntimeFactoryForTest = null;
 
-function setPanelRuntimeFactoryForTest(factory) {
+function setPanelRuntimeFactoryForTest_(factory) {
   panelRuntimeFactoryForTest = factory;
 }
 
@@ -58,6 +105,10 @@ function getPanelConvocation(convocationId) {
 
 function getPanelParticipation(matchId) {
   return safePanelResponse(function() { return panelRuntime().queries.getPanelParticipation(matchId); });
+}
+
+function getPanelReferenceData() {
+  return safePanelResponse(function() { return panelRuntime().queries.getPanelReferenceData(); });
 }
 
 function commandCreateSession(input) {
@@ -217,6 +268,44 @@ function commandUpdateParticipation(participationId, updates, actor) {
   });
 }
 
+function commandSaveParticipation(matchId, studentId, payload, actor) {
+  return safePanelResponse(function() {
+    var runtime = panelRuntime();
+    var operationId = serverOperationId(runtime);
+    var source = payload || {};
+    var view = runtime.queries.getPanelParticipation(matchId);
+    var row = (view.rows || []).filter(function(candidate) {
+      return candidate.ALUMNO_ID === studentId;
+    })[0] || null;
+    var dto;
+
+    if (!row || !row.CONVOCATORIA_ID || !row.ASISTENCIA_ESTADO) {
+      throw new Error('PANEL_PARTICIPATION_ATTENDANCE_REQUIRED');
+    }
+
+    dto = {
+      PARTIDO_ID: matchId,
+      ALUMNO_ID: studentId,
+      CONVOCATORIA_ID: row.CONVOCATORIA_ID,
+      ASISTIO: row.ASISTIO_DERIVADO,
+      ASISTENCIA_ESTADO: row.ASISTENCIA_ESTADO,
+      CONDICION_INICIAL: source.CONDICION_INICIAL,
+      MINUTOS_JUGADOS: source.MINUTOS_JUGADOS,
+      GOLES: source.GOLES,
+      AMARILLAS: source.AMARILLAS,
+      ROJAS: source.ROJAS,
+      CALIFICACION: source.CALIFICACION,
+      OBSERVACIONES: source.OBSERVACIONES
+    };
+
+    if (row.PARTICIPACION_ID) {
+      return runtime.commands.updateParticipation(row.PARTICIPACION_ID, dto, { operationId: operationId, actor: actor });
+    }
+
+    return runtime.commands.createParticipation(dto, { operationId: operationId, actor: actor });
+  });
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {
     commandApproveConvocation,
@@ -229,6 +318,7 @@ if (typeof module !== 'undefined') {
     commandCreateSession,
     commandGenerateConvocation,
     commandMarkMatchPlayed,
+    commandSaveParticipation,
     commandPrepareConvocationCommunications,
     commandResolveAbsence,
     commandSendPendingCommunications,
@@ -240,7 +330,10 @@ if (typeof module !== 'undefined') {
     getPanelConvocation,
     getPanelDashboard,
     getPanelParticipation,
+    getPanelReferenceData,
     safePanelResponse,
-    setPanelRuntimeFactoryForTest
+    setPanelRuntimeFactoryForTest: setPanelRuntimeFactoryForTest_,
+    setPanelRuntimeFactoryForTest_,
+    toPanelSerializable
   };
 }
