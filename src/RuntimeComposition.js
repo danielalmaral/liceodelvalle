@@ -102,7 +102,16 @@ function createAppsScriptRuntime(options) {
     validateAttendanceSnapshot: requireConstructor('validateAttendanceSnapshot')
   });
   var matchService = requireConstructor('createMatchService')({
+    clock: options.clock,
+    idGenerator: options.idGenerator,
     matchRepository: repositories.matchRepository,
+    utils: options.utils
+  });
+  var sessionService = requireConstructor('createSessionService')({
+    clock: options.clock,
+    idGenerator: options.idGenerator,
+    matchService: matchService,
+    sessionRepository: repositories.sessionRepository,
     utils: options.utils
   });
   var eligibilityService = requireConstructor('createEligibilityService')({
@@ -177,7 +186,8 @@ function createAppsScriptRuntime(options) {
     masterDataService: masterDataService,
     matchService: matchService,
     participationService: participationService,
-    rotationService: rotationService
+    rotationService: rotationService,
+    sessionService: sessionService
   };
   var operationalCommandService = requireConstructor('createOperationalCommandService')({
     idGenerator: options.idGenerator,
@@ -199,8 +209,12 @@ function createAppsScriptRuntime(options) {
     appendAudit: function(event) { return withLock(function() { return auditService.appendEvent(event); }); },
     approveConvocation: lockedCommand('approveConvocation'),
     assignPlayerPosition: lockedCommand('assignPlayerPosition'),
+    cancelMatch: lockedCommand('cancelMatch'),
+    closeSession: lockedCommand('closeSession'),
     createAttendance: function(input) { return withLock(function() { return attendanceFoundationService.createAttendance(input); }); },
+    createMatch: lockedCommand('createMatch'),
     createParticipation: lockedCommand('createParticipation'),
+    createSession: lockedCommand('createSession'),
     generateAbsenceCommunications: function(attendanceId) { return withLock(function() { return operationalCommandService.generateAbsenceCommunications(attendanceId); }); },
     generateConvocation: function(matchId, actor) { return withLock(function() { return operationalCommandService.generateConvocation(matchId, actor); }); },
     generateConvocationCommunications: function(convocationId) { return withLock(function() { return operationalCommandService.generateConvocationCommunications(convocationId); }); },
@@ -209,6 +223,9 @@ function createAppsScriptRuntime(options) {
     retryCommunication: lockedCommand('retryCommunication'),
     sendPendingCommunications: lockedCommand('sendPendingCommunications'),
     setFinalSelection: lockedCommand('setFinalSelection'),
+    markMatchPlayed: lockedCommand('markMatchPlayed'),
+    updateMatch: lockedCommand('updateMatch'),
+    updateStudentSportsState: lockedCommand('updateStudentSportsState'),
     updateParticipation: lockedCommand('updateParticipation')
   };
   var queries = {
@@ -225,11 +242,21 @@ function createAppsScriptRuntime(options) {
     getTutors: function() { return masterDataService.getTutors(); },
     validateMatchParticipationReadiness: function(matchId) { return participationService.validateMatchParticipationReadiness(matchId); }
   };
+  var panelQueryService = requireConstructor('createPanelQueryService')({
+    configService: configService,
+    convocationRepository: repositories.convocationRepository,
+    detailRepository: repositories.detailRepository,
+    queries: queries
+  });
+  queries.getPanelAttendance = function(sessionId) { return panelQueryService.getAttendanceView(sessionId); };
+  queries.getPanelConvocation = function(convocationId) { return panelQueryService.getConvocationView(convocationId); };
+  queries.getPanelDashboard = function() { return panelQueryService.getDashboard(); };
+  queries.getPanelParticipation = function(matchId) { return panelQueryService.getParticipationView(matchId); };
 
   return {
     commands: commands,
     queries: queries,
-    runtime: { spreadsheetId: spreadsheetId, withLock: withLock },
+    runtime: { idGenerator: options.idGenerator, spreadsheetId: spreadsheetId, withLock: withLock },
     services: queries,
     triggerHandlers: triggerFactory({ commands: commands })
   };

@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const utils = require('../../src/common/DomainUtils');
 require('../../src/config/ConfigSetup');
+require('../../src/config/PanelSetup');
 require('../../src/domain/MasterDataContracts');
 require('../../src/domain/AttendanceContracts');
 require('../../src/domain/MatchContracts');
@@ -31,6 +32,8 @@ const { createParticipationService } = require('../../src/services/Participation
 const { createCommunicationService } = require('../../src/services/CommunicationService');
 const { createAuditService } = require('../../src/services/AuditService');
 const { createOperationalCommandService } = require('../../src/services/OperationalCommandService');
+const { createPanelQueryService } = require('../../src/services/PanelQueryService');
+const { createSessionService } = require('../../src/services/SessionService');
 const { completeConfigRows } = require('../config/config-fixtures');
 
 function fakeSheet(rows = []) {
@@ -149,8 +152,10 @@ function runtimeOptions(overrides = {}) {
       createMasterDataService,
       createMatchService,
       createOperationalCommandService,
+      createPanelQueryService,
       createParticipationService,
       createRotationService,
+      createSessionService,
       validateAttendanceConfigPolicy,
       validateAttendanceSnapshot
     },
@@ -255,9 +260,16 @@ test('RUNTIME_FULL_GRAPH_COMPOSITION_TEST builds all P1-P13 services and command
     'getParticipations',
     'validateMatchParticipationReadiness',
     'getCommunications',
-    'getEvents'
+    'getEvents',
+    'getPanelDashboard',
+    'getPanelAttendance',
+    'getPanelConvocation',
+    'getPanelParticipation'
   ].forEach((name) => assert.equal(typeof runtime.queries[name], 'function'));
   assert.equal(typeof runtime.commands.approveConvocation, 'function');
+  assert.equal(typeof runtime.commands.createSession, 'function');
+  assert.equal(typeof runtime.commands.createMatch, 'function');
+  assert.equal(typeof runtime.commands.updateStudentSportsState, 'function');
 });
 
 test('RUNTIME_MISSING_REQUIRED_REPOSITORY_TEST fails closed on missing repository', () => {
@@ -375,6 +387,13 @@ test('RUNTIME_MUTATION_BYPASS_BLOCKED_TEST does not expose mutable services', ()
     'setFinalSelection',
     'assignPlayerPosition',
     'approveConvocation',
+    'createSession',
+    'closeSession',
+    'createMatch',
+    'updateMatch',
+    'markMatchPlayed',
+    'cancelMatch',
+    'updateStudentSportsState',
     'createParticipation',
     'updateParticipation',
     'generateAbsenceCommunications',
@@ -412,6 +431,13 @@ test('RUNTIME_COMMAND_ONLY_MUTATION_SURFACE_TEST exposes mutations only on comma
     'setFinalSelection',
     'assignPlayerPosition',
     'approveConvocation',
+    'createSession',
+    'closeSession',
+    'createMatch',
+    'updateMatch',
+    'markMatchPlayed',
+    'cancelMatch',
+    'updateStudentSportsState',
     'createParticipation',
     'updateParticipation',
     'generateAbsenceCommunications',
@@ -568,8 +594,8 @@ test('TRIGGER_NO_SERVICE_BYPASS_TEST ignores mutable services fallback', () => {
 
 test('GLOBAL_SETUP_IDEMPOTENCY_TEST creates all operational sheets', () => {
   const spreadsheet = fakeSpreadsheet();
-  assert.equal(setupOperationalSheets(spreadsheet, setupSheetWithHeaders).sheetCount, 11);
-  assert.equal(setupOperationalSheets(spreadsheet, setupSheetWithHeaders).sheetCount, 11);
+  assert.equal(setupOperationalSheets(spreadsheet, setupSheetWithHeaders).sheetCount, 12);
+  assert.equal(setupOperationalSheets(spreadsheet, setupSheetWithHeaders).sheetCount, 12);
 });
 
 test('GLOBAL_SETUP_PRESERVES_DATA_TEST does not clear existing rows', () => {

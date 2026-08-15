@@ -498,6 +498,232 @@ function createOperationalCommandService(dependencies) {
     });
   }
 
+  function createSession(input, options) {
+    options = options || {};
+    var normalized = copyRecord(input || {});
+    var opId = requireOperationId('SESSION_CREATE', options);
+
+    return runAudited(opId, {
+      actor: options.actor || normalized.actor || 'coach',
+      command: 'CREATE_SESSION',
+      payload: {
+        COMPETENCIA: normalized.COMPETENCIA || normalized.competencia || '',
+        DESCRIPCION_FINGERPRINT: sensitiveFingerprint(normalized.DESCRIPCION || normalized.descripcion),
+        FECHA: normalized.FECHA || normalized.fecha,
+        HORA_FIN: normalized.HORA_FIN || normalized.horaFin || '',
+        HORA_INICIO: normalized.HORA_INICIO || normalized.horaInicio || '',
+        PARTIDO_ID: normalized.PARTIDO_ID || normalized.partidoId || '',
+        SESION_ID: normalized.SESION_ID || normalized.sesionId || '',
+        TIPO: normalized.TIPO || normalized.tipo
+      }
+    }, function() {
+      return services.sessionService.createSession(input);
+    }, function(result) {
+      return [{
+        EVENTO_ID: 'AUD-' + opId + '-SESION-' + result.SESION_ID + '-CREACION',
+        USUARIO: options.actor || normalized.actor || 'coach',
+        ENTIDAD: 'SESIONES',
+        ENTIDAD_ID: result.SESION_ID,
+        ACCION: 'CREACION_SESION',
+        CAMPO: 'ESTADO',
+        VALOR_ANTERIOR: '',
+        VALOR_NUEVO: result.ESTADO,
+        MOTIVO: 'SESSION_OPERATION'
+      }];
+    });
+  }
+
+  function closeSession(sessionId, actor, options) {
+    options = options || {};
+    var before = repositories.sessionRepository.getAll().filter(function(record) {
+      return record.SESION_ID === sessionId;
+    })[0] || {};
+    var opId = requireOperationId('SESSION_CLOSE', options);
+
+    return runAudited(opId, {
+      actor: actor || 'coach',
+      command: 'CLOSE_SESSION',
+      payload: { sessionId: sessionId }
+    }, function() {
+      return services.sessionService.closeSession(sessionId, actor);
+    }, function(result) {
+      return [{
+        EVENTO_ID: 'AUD-' + opId + '-SESION-' + sessionId + '-CIERRE',
+        USUARIO: actor || 'coach',
+        ENTIDAD: 'SESIONES',
+        ENTIDAD_ID: sessionId,
+        ACCION: 'CIERRE_SESION',
+        CAMPO: 'ESTADO',
+        VALOR_ANTERIOR: before.ESTADO || '',
+        VALOR_NUEVO: result.ESTADO,
+        MOTIVO: 'SESSION_OPERATION'
+      }];
+    });
+  }
+
+  function createMatch(input, options) {
+    options = options || {};
+    var normalized = copyRecord(input || {});
+    var opId = requireOperationId('MATCH_CREATE', options);
+
+    return runAudited(opId, {
+      actor: options.actor || normalized.actor || 'coach',
+      command: 'CREATE_MATCH',
+      payload: {
+        COMPETENCIA: normalized.COMPETENCIA || normalized.competencia,
+        DURACION_MINUTOS: normalized.DURACION_MINUTOS !== undefined ? normalized.DURACION_MINUTOS : normalized.duracionMinutos,
+        FECHA: normalized.FECHA || normalized.fecha,
+        HORA_CITACION: normalized.HORA_CITACION || normalized.horaCitacion || '',
+        HORA_PARTIDO: normalized.HORA_PARTIDO || normalized.horaPartido || '',
+        INDICACIONES_FINGERPRINT: sensitiveFingerprint(normalized.INDICACIONES || normalized.indicaciones),
+        JORNADA: normalized.JORNADA !== undefined ? normalized.JORNADA : normalized.jornada,
+        LOCAL_VISITANTE: normalized.LOCAL_VISITANTE || normalized.localVisitante,
+        OBSERVACIONES_FINGERPRINT: sensitiveFingerprint(normalized.OBSERVACIONES || normalized.observaciones),
+        PARTIDO_ID: normalized.PARTIDO_ID || normalized.partidoId || '',
+        RIVAL: normalized.RIVAL || normalized.rival,
+        SEDE: normalized.SEDE || normalized.sede,
+        UNIFORME: normalized.UNIFORME || normalized.uniforme || ''
+      }
+    }, function() {
+      return services.matchService.createMatch(input);
+    }, function(result) {
+      return [{
+        EVENTO_ID: 'AUD-' + opId + '-PARTIDO-' + result.PARTIDO_ID + '-CREACION',
+        USUARIO: options.actor || normalized.actor || 'coach',
+        ENTIDAD: 'PARTIDOS',
+        ENTIDAD_ID: result.PARTIDO_ID,
+        ACCION: 'CREACION_PARTIDO',
+        CAMPO: 'ESTADO',
+        VALOR_ANTERIOR: '',
+        VALOR_NUEVO: result.ESTADO,
+        MOTIVO: 'MATCH_OPERATION'
+      }];
+    });
+  }
+
+  function updateMatch(matchId, updates, actor, options) {
+    options = options || {};
+    var before = repositories.matchRepository.getAll().filter(function(record) {
+      return record.PARTIDO_ID === matchId;
+    })[0] || {};
+    var opId = requireOperationId('MATCH_UPDATE', options);
+
+    return runAudited(opId, {
+      actor: actor || 'coach',
+      command: 'UPDATE_MATCH',
+      payload: {
+        matchId: matchId,
+        updatesFingerprint: fingerprint(updates || {})
+      }
+    }, function() {
+      return services.matchService.updateMatch(matchId, updates, actor);
+    }, function(result) {
+      return [{
+        EVENTO_ID: 'AUD-' + opId + '-PARTIDO-' + matchId + '-CAMBIO',
+        USUARIO: actor || 'coach',
+        ENTIDAD: 'PARTIDOS',
+        ENTIDAD_ID: matchId,
+        ACCION: 'CAMBIO_PARTIDO',
+        CAMPO: 'PARTIDO',
+        VALOR_ANTERIOR: before.ESTADO || '',
+        VALOR_NUEVO: result.ESTADO,
+        MOTIVO: 'MATCH_OPERATION'
+      }];
+    });
+  }
+
+  function markMatchPlayed(matchId, score, actor, options) {
+    options = options || {};
+    var before = repositories.matchRepository.getAll().filter(function(record) {
+      return record.PARTIDO_ID === matchId;
+    })[0] || {};
+    var opId = requireOperationId('MATCH_PLAYED', options);
+
+    return runAudited(opId, {
+      actor: actor || 'coach',
+      command: 'MARK_MATCH_PLAYED',
+      payload: {
+        GOLES_CONTRA: score && (score.GOLES_CONTRA !== undefined ? score.GOLES_CONTRA : score.golesContra),
+        GOLES_FAVOR: score && (score.GOLES_FAVOR !== undefined ? score.GOLES_FAVOR : score.golesFavor),
+        matchId: matchId
+      }
+    }, function() {
+      return services.matchService.markMatchPlayed(matchId, score, actor);
+    }, function(result) {
+      return [{
+        EVENTO_ID: 'AUD-' + opId + '-PARTIDO-' + matchId + '-JUGADO',
+        USUARIO: actor || 'coach',
+        ENTIDAD: 'PARTIDOS',
+        ENTIDAD_ID: matchId,
+        ACCION: 'PARTIDO_JUGADO',
+        CAMPO: 'ESTADO',
+        VALOR_ANTERIOR: before.ESTADO || '',
+        VALOR_NUEVO: result.ESTADO,
+        MOTIVO: 'MATCH_OPERATION'
+      }];
+    });
+  }
+
+  function cancelMatch(matchId, actor, options) {
+    options = options || {};
+    var before = repositories.matchRepository.getAll().filter(function(record) {
+      return record.PARTIDO_ID === matchId;
+    })[0] || {};
+    var opId = requireOperationId('MATCH_CANCEL', options);
+
+    return runAudited(opId, {
+      actor: actor || 'coach',
+      command: 'CANCEL_MATCH',
+      payload: { matchId: matchId }
+    }, function() {
+      return services.matchService.cancelMatch(matchId, actor);
+    }, function(result) {
+      return [{
+        EVENTO_ID: 'AUD-' + opId + '-PARTIDO-' + matchId + '-CANCELADO',
+        USUARIO: actor || 'coach',
+        ENTIDAD: 'PARTIDOS',
+        ENTIDAD_ID: matchId,
+        ACCION: 'PARTIDO_CANCELADO',
+        CAMPO: 'ESTADO',
+        VALOR_ANTERIOR: before.ESTADO || '',
+        VALOR_NUEVO: result.ESTADO,
+        MOTIVO: 'MATCH_OPERATION'
+      }];
+    });
+  }
+
+  function updateStudentSportsState(studentId, state, actor, reasonCode, options) {
+    options = options || {};
+    var before = repositories.studentRepository.getAll().filter(function(record) {
+      return record.ALUMNO_ID === studentId;
+    })[0] || {};
+    var opId = requireOperationId('STUDENT_SPORTS_STATE', options);
+
+    return runAudited(opId, {
+      actor: actor || 'coach',
+      command: 'UPDATE_STUDENT_SPORTS_STATE',
+      payload: {
+        reasonCode: reasonCode,
+        state: state,
+        studentId: studentId
+      }
+    }, function() {
+      return services.masterDataService.updateStudentSportsState(studentId, state, actor, reasonCode);
+    }, function(result) {
+      return [{
+        EVENTO_ID: 'AUD-' + opId + '-ALUMNO-' + studentId + '-ESTADO_DEPORTIVO',
+        USUARIO: actor || 'coach',
+        ENTIDAD: 'ALUMNOS',
+        ENTIDAD_ID: studentId,
+        ACCION: 'ESTADO_DEPORTIVO',
+        CAMPO: 'ESTADO_DEPORTIVO',
+        VALOR_ANTERIOR: before.ESTADO_DEPORTIVO || '',
+        VALOR_NUEVO: result.ESTADO_DEPORTIVO,
+        MOTIVO: reasonCode
+      }];
+    });
+  }
+
   function sendPendingCommunications(options) {
     options = options || {};
     var opId = requireOperationId('COMMUNICATION_SEND', options);
@@ -587,15 +813,22 @@ function createOperationalCommandService(dependencies) {
   return {
     approveConvocation: approveConvocation,
     assignPlayerPosition: assignPlayerPosition,
+    cancelMatch: cancelMatch,
+    closeSession: closeSession,
+    createMatch: createMatch,
     createParticipation: createParticipation,
+    createSession: createSession,
     generateAbsenceCommunications: generateAbsenceCommunications,
     generateConvocation: generateConvocation,
     generateConvocationCommunications: generateConvocationCommunications,
+    markMatchPlayed: markMatchPlayed,
     resolveAbsence: resolveAbsence,
     resolveExpiredAbsences: resolveExpiredAbsences,
     retryCommunication: retryCommunication,
     sendPendingCommunications: sendPendingCommunications,
     setFinalSelection: setFinalSelection,
+    updateMatch: updateMatch,
+    updateStudentSportsState: updateStudentSportsState,
     updateParticipation: updateParticipation
   };
 }

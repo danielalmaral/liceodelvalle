@@ -49,3 +49,11 @@ Los módulos en `src/` conservan compatibilidad directa con Apps Script V8: no d
 `ParticipationService`, `CommunicationService`, `AuditService`, `OperationalCommandService`, `SheetRepository`, `RuntimeComposition` y `TriggerHandlers` completan la capa operacional sin recursos productivos. La participación usa asistencia y convocatoria como autoridad; comunicaciones persiste mensajes 1:N por tutor; bitácora es append-only y sanitizada; `SheetRepository` mapea headers a objetos sin usar row numbers como identidad funcional.
 
 La composición runtime exige `spreadsheetId`, repositorios canonicos, dependencias explicitas, `idGenerator.operationId` y lock inyectado. Los writes criticos se exponen sólo por comandos lockeados; las lecturas salen por fachadas read-only. Los triggers dependen de commands y no tienen fallback a servicios mutables. No se instalan triggers en esta fase.
+
+## P14 Panel And Apps Script Readiness
+
+P14 agrega una superficie operativa para el piloto sin cambiar las reglas deportivas certificadas. Los writes nuevos de sesiones, partidos y estado deportivo se exponen mediante `runtime.commands`, usan lock y auditan cambios autoritativos. El panel es UI y query model: lee snapshots y capacidades, pero no es fuente de verdad.
+
+`PanelHandlers` traduce entradas de HtmlService hacia comandos runtime y genera `operationId` en servidor. El navegador no puede imponer IDs de operación. Los errores devueltos al panel son sanitizados y no incluyen stack traces ni datos sensibles.
+
+`AppsScriptEnvironmentAdapter`, `AppsScriptLockAdapter`, `AppsScriptRepositoryFactory`, `AppsScriptIdGenerator` y `createLdvAppsScriptRuntime` resuelven APIs Google de forma lazy. Ningún archivo abre Spreadsheet, usa LockService, llama MailApp ni lee Script Properties al cargarse.

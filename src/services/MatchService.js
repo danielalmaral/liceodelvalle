@@ -1,6 +1,21 @@
 function createMatchService(dependencies) {
   var utils = dependencies.utils;
   var matchRepository = dependencies.matchRepository;
+  var idGenerator = dependencies.idGenerator || {};
+
+  function copyRecord(record) {
+    var next = {};
+    Object.keys(record || {}).forEach(function(key) {
+      next[key] = record[key];
+    });
+    return next;
+  }
+
+  function requireMatchRepositoryWrite() {
+    if (!matchRepository || typeof matchRepository.insert !== 'function' || typeof matchRepository.updateById !== 'function') {
+      throw utils.createDomainError('REPOSITORY_WRITE_REQUIRED', 'PARTIDOS');
+    }
+  }
 
   function parseTime(value, fieldName) {
     if (!value) {
@@ -88,9 +103,117 @@ function createMatchService(dependencies) {
     })[0] || null;
   }
 
+  function findRawMatch(matchId) {
+    return matchRepository.getAll().filter(function(match) {
+      return match.PARTIDO_ID === matchId;
+    })[0] || null;
+  }
+
+  function rowFromInput(input, base) {
+    var row = copyRecord(base || {});
+    var matchId = input.PARTIDO_ID || input.partidoId || row.PARTIDO_ID || (idGenerator.matchId ? idGenerator.matchId() : '');
+
+    row.PARTIDO_ID = utils.requireText(matchId, 'PARTIDO_ID');
+    row.COMPETENCIA = input.COMPETENCIA || input.competencia || row.COMPETENCIA;
+    row.JORNADA = input.JORNADA !== undefined ? input.JORNADA : (input.jornada !== undefined ? input.jornada : row.JORNADA);
+    row.RIVAL = input.RIVAL || input.rival || row.RIVAL;
+    row.FECHA = input.FECHA || input.fecha || row.FECHA;
+    row.HORA_CITACION = input.HORA_CITACION || input.horaCitacion || row.HORA_CITACION || '';
+    row.HORA_PARTIDO = input.HORA_PARTIDO || input.horaPartido || row.HORA_PARTIDO || '';
+    row.SEDE = input.SEDE || input.sede || row.SEDE;
+    row.LOCAL_VISITANTE = input.LOCAL_VISITANTE || input.localVisitante || row.LOCAL_VISITANTE;
+    row.DURACION_MINUTOS = input.DURACION_MINUTOS !== undefined ? input.DURACION_MINUTOS : (input.duracionMinutos !== undefined ? input.duracionMinutos : row.DURACION_MINUTOS);
+    row.UNIFORME = input.UNIFORME !== undefined ? input.UNIFORME : (input.uniforme !== undefined ? input.uniforme : (row.UNIFORME || ''));
+    row.INDICACIONES = input.INDICACIONES !== undefined ? input.INDICACIONES : (input.indicaciones !== undefined ? input.indicaciones : (row.INDICACIONES || ''));
+    row.ESTADO = input.ESTADO || input.estado || row.ESTADO || 'PROGRAMADO';
+    row.GOLES_FAVOR = input.GOLES_FAVOR !== undefined ? input.GOLES_FAVOR : (input.golesFavor !== undefined ? input.golesFavor : (row.GOLES_FAVOR || ''));
+    row.GOLES_CONTRA = input.GOLES_CONTRA !== undefined ? input.GOLES_CONTRA : (input.golesContra !== undefined ? input.golesContra : (row.GOLES_CONTRA || ''));
+    row.OBSERVACIONES = input.OBSERVACIONES !== undefined ? input.OBSERVACIONES : (input.observaciones !== undefined ? input.observaciones : (row.OBSERVACIONES || ''));
+
+    normalizeMatch(row);
+    return row;
+  }
+
+  function assertUniqueMatchId(matchId) {
+    matchRepository.getAll().forEach(function(record) {
+      if (record.PARTIDO_ID === matchId) {
+        throw utils.createDomainError('MATCH_DUPLICATE_ID', matchId);
+      }
+    });
+  }
+
+  function createMatch(input) {
+    requireMatchRepositoryWrite();
+    var row = rowFromInput(input || {});
+    assertUniqueMatchId(row.PARTIDO_ID);
+    return matchRepository.insert(row);
+  }
+
+  function updateMatch(matchId, updates, actor) {
+    requireMatchRepositoryWrite();
+    var id = utils.requireText(matchId, 'PARTIDO_ID');
+    var current = findRawMatch(id);
+    var next;
+
+    if (!current) {
+      throw utils.createDomainError('MATCH_NOT_FOUND', id);
+    }
+    if (current.ESTADO !== 'PROGRAMADO') {
+      throw utils.createDomainError('MATCH_UPDATE_STATE_INVALID', id);
+    }
+
+    next = rowFromInput(updates || {}, current);
+    if (next.PARTIDO_ID !== id) {
+      throw utils.createDomainError('MATCH_IDENTITY_MUTATION', id);
+    }
+    return matchRepository.updateById('PARTIDO_ID', id, next);
+  }
+
+  function markMatchPlayed(matchId, score, actor) {
+    var id = utils.requireText(matchId, 'PARTIDO_ID');
+    var current = findRawMatch(id);
+    var next;
+
+    requireMatchRepositoryWrite();
+    if (!current) {
+      throw utils.createDomainError('MATCH_NOT_FOUND', id);
+    }
+    if (current.ESTADO === 'CANCELADO') {
+      throw utils.createDomainError('MATCH_CANCELLED', id);
+    }
+
+    next = rowFromInput({
+      ESTADO: 'JUGADO',
+      GOLES_FAVOR: score && score.GOLES_FAVOR !== undefined ? score.GOLES_FAVOR : score && score.golesFavor,
+      GOLES_CONTRA: score && score.GOLES_CONTRA !== undefined ? score.GOLES_CONTRA : score && score.golesContra
+    }, current);
+    return matchRepository.updateById('PARTIDO_ID', id, next);
+  }
+
+  function cancelMatch(matchId, actor) {
+    var id = utils.requireText(matchId, 'PARTIDO_ID');
+    var current = findRawMatch(id);
+    var next;
+
+    requireMatchRepositoryWrite();
+    if (!current) {
+      throw utils.createDomainError('MATCH_NOT_FOUND', id);
+    }
+    if (current.ESTADO === 'CANCELADO') {
+      throw utils.createDomainError('MATCH_CANCELLED', id);
+    }
+
+    next = rowFromInput({ ESTADO: 'CANCELADO', GOLES_FAVOR: '', GOLES_CONTRA: '' }, current);
+    return matchRepository.updateById('PARTIDO_ID', id, next);
+  }
+
   return {
+    cancelMatch: cancelMatch,
+    createMatch: createMatch,
     getMatchById: getMatchById,
-    getMatches: getMatches
+    getMatches: getMatches,
+    markMatchPlayed: markMatchPlayed,
+    updateMatch: updateMatch
   };
 }
 

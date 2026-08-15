@@ -18,6 +18,8 @@ El safe batch P6-P9 agrega partidos, elegibilidad, rotación y motor determinist
 
 El safe batch P10-P13 agrega participación post-partido, comunicaciones persistidas, bitácora append-only y runtime/repository para Google Sheets con adapters fake en tests. No instala triggers, no envía correos reales, no crea Spreadsheet real y no implementa panel.
 
+P14 agrega la superficie operativa del piloto: comandos para sesiones, partidos y estado deportivo, panel Apps Script como UI de lectura/acciones, adapters reales lazy para Apps Script, hoja `PANEL` como landing no autoritativa y un smoke harness local con fakes. No ejecuta Google real, no hace `clasp push`, no instala triggers y no envía correo real.
+
 ## Contratos
 
 - `docs/MATCH_CONTRACT.md`: `PARTIDOS` y FK `SESIONES.PARTIDO_ID`.
@@ -28,6 +30,10 @@ El safe batch P10-P13 agrega participación post-partido, comunicaciones persist
 - `docs/COMMUNICATION_CONTRACT.md`: comunicaciones persistidas, adapter de correo e idempotencia.
 - `docs/AUDIT_CONTRACT.md`: bitácora append-only y privacidad.
 - `docs/SHEET_RUNTIME_CONTRACT.md`: repositorio de hojas, runtime, locks y triggers diferidos.
+- `docs/PANEL_CONTRACT.md`: query model, UI y frontera de comandos del panel.
+- `docs/APPS_SCRIPT_BOOTSTRAP_CONTRACT.md`: adapters lazy y bootstrap real diferido.
+- `docs/P14_OPERATIONAL_WORKFLOW.md`: flujo operativo piloto con fakes.
+- `docs/REAL_GOOGLE_SMOKE_RUNBOOK.md`: runbook de P15 para smoke real controlado.
 
 ## Comandos
 

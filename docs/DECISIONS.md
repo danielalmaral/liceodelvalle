@@ -26,7 +26,7 @@ Las claves runtime configurables deben resolverse desde `CONFIG`. Si una clave r
 
 ## ADR-007: Schema Sin Valores Runtime
 
-`ConfigSchema` documenta claves admitidas, grupos, tipos, obligatoriedad, unidades y validaciones estructurales. Los valores acordados viven en documentación o cargas explícitas, no como fallback productivo.
+`ConfigSchema` documenta claves admitidas, grupos, tipos, obligatoriedad, unidades y validaciones estructurales. Los valores acordados viven en documentación o cargas explícitas, no como valor productivo embebido.
 
 ## ADR-008: Snapshot Historico Futuro
 
@@ -75,3 +75,15 @@ Los writes criticos P10-P13 deben pasar por comandos runtime lockeados. Cuando u
 ## ADR-019: Runtime Read-Only Hacia Consumidores
 
 La composicion mantiene servicios mutables internos y expone al consumidor sólo `runtime.commands` para mutaciones y fachadas de lectura en `runtime.queries`/`runtime.services`. Los triggers productivos usan commands y fallan cerrado si falta la frontera operacional.
+
+## ADR-020: Panel Como UI No Autoritativa
+
+El panel P14 puede presentar datos y disparar acciones, pero no escribe directamente en Sheets ni contiene reglas deportivas. Toda mutacion pasa por handlers, comandos runtime, lock, servicio de dominio, repository y auditoria cuando corresponde.
+
+## ADR-021: Bootstrap Apps Script Lazy
+
+Los adapters reales de Apps Script no llaman APIs Google al cargar archivo. Script Properties, SpreadsheetApp, LockService, Utilities y proveedor de correo se resuelven sólo cuando un handler o setup explicito los necesita.
+
+## ADR-022: Hardening Diferido Pre-Production
+
+`OPERATION_FINGERPRINT_CRYPTO_HARDENING` permanece diferido para pre-produccion. El fingerprint certificado del piloto sigue vigente hasta que se evalúe SHA-256 o HMAC-SHA-256 compatible con Apps Script.

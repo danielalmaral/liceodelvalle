@@ -72,4 +72,6 @@ P4 sólo prepara intents de aviso de ausencia. La persistencia de `COMUNICACIONE
 
 `BITACORA` registra eventos append-only de cambios autoritativos mediante `EVENTO_ID` estable. No duplica contenido sensible de mensajes ni datos de contacto.
 
-`PANEL` permanece diferido.
+## PANEL
+
+`PANEL` existe desde P14 como hoja de landing y ayuda. No almacena autoridad operativa, no guarda estados de alumnos, partidos, asistencia, convocatorias, comunicaciones ni bitacora. La interfaz principal es el sidebar HtmlService.

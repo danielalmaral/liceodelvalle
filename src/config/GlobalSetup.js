@@ -10,7 +10,8 @@ function setupOperationalSheets(spreadsheet, setupFn) {
   setupFn(spreadsheet, 'PARTICIPACION_PARTIDO', PARTICIPATION_HEADERS);
   setupFn(spreadsheet, 'COMUNICACIONES', COMMUNICATION_HEADERS);
   setupFn(spreadsheet, 'BITACORA', AUDIT_HEADERS);
-  return { sheetCount: 11 };
+  setupPanelSheet(spreadsheet, setupFn);
+  return { sheetCount: 12 };
 }
 
 if (typeof module !== 'undefined') {

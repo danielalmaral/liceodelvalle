@@ -3,6 +3,14 @@ function createMasterDataService(dependencies) {
   var studentRepository = dependencies.studentRepository;
   var tutorRepository = dependencies.tutorRepository;
 
+  function copyRecord(record) {
+    var next = {};
+    Object.keys(record || {}).forEach(function(key) {
+      next[key] = record[key];
+    });
+    return next;
+  }
+
   function normalizeStudent(row) {
     var alta = utils.parseDateValue(row.FECHA_ALTA, 'FECHA_ALTA');
     var baja = utils.parseOptionalDateValue(row.FECHA_BAJA, 'FECHA_BAJA');
@@ -111,10 +119,36 @@ function createMasterDataService(dependencies) {
     });
   }
 
+  function updateStudentSportsState(studentId, state, actor, reasonCode) {
+    if (!studentRepository || typeof studentRepository.updateById !== 'function') {
+      throw utils.createDomainError('REPOSITORY_WRITE_REQUIRED', 'ALUMNOS');
+    }
+
+    var id = utils.requireText(studentId, 'ALUMNO_ID');
+    var current = studentRepository.getAll().filter(function(student) {
+      return student.ALUMNO_ID === id;
+    })[0] || null;
+    var next;
+    var allowedReasons = ['COACH_DECISION', 'INJURY', 'DISCIPLINE', 'CLEARED'];
+
+    if (!current) {
+      throw utils.createDomainError('STUDENT_NOT_FOUND', id);
+    }
+
+    if (allowedReasons.indexOf(reasonCode) === -1) {
+      throw utils.createDomainError('STUDENT_SPORTS_REASON_INVALID', 'reasonCode');
+    }
+
+    next = copyRecord(current);
+    next.ESTADO_DEPORTIVO = utils.assertOneOf(state, STUDENT_ENUMS.ESTADO_DEPORTIVO, 'ESTADO_DEPORTIVO');
+    return studentRepository.updateById('ALUMNO_ID', id, next);
+  }
+
   return {
     getCommunicationReadiness: getCommunicationReadiness,
     getStudents: getStudents,
-    getTutors: getTutors
+    getTutors: getTutors,
+    updateStudentSportsState: updateStudentSportsState
   };
 }
 

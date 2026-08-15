@@ -21,7 +21,7 @@ Runtime:
 - `idGenerator.operationId` es obligatorio para la frontera operacional.
 - IDs y entorno futuro viven en Script Properties, no hardcoded.
 - El lock es obligatorio. Los comandos de escritura expuestos por runtime se ejecutan bajo `runExclusive`.
-- `runtime.commands` es la autoridad para writes criticos: ausencias, asistencias, generacion de convocatoria, seleccion final, generacion/envio de comunicaciones, participacion y bitacora.
+- `runtime.commands` es la autoridad para writes criticos: sesiones, partidos, estado deportivo, ausencias, asistencias, generacion de convocatoria, seleccion final, generacion/envio de comunicaciones, participacion y bitacora.
 - `runtime.services` y `runtime.queries` exponen sólo fachadas de lectura; los servicios mutables internos y repositories internos no se devuelven.
 - Ninguna fachada publica fuera de `commands` expone `insert`, `updateById`, `append` u objetos repository.
 - `queries.getRotationBefore(studentId, competition)` conserva la firma del servicio de rotacion.
@@ -31,5 +31,5 @@ Runtime:
 
 Setup global:
 
-- Crea o valida 11 hojas operativas: `CONFIG`, `ALUMNOS`, `TUTORES`, `SESIONES`, `ASISTENCIAS`, `PARTIDOS`, `CONVOCATORIAS`, `CONVOCATORIA_DETALLE`, `PARTICIPACION_PARTIDO`, `COMUNICACIONES`, `BITACORA`.
-- `PANEL` queda fuera de este batch.
+- Crea o valida 12 hojas operativas: `CONFIG`, `ALUMNOS`, `TUTORES`, `SESIONES`, `ASISTENCIAS`, `PARTIDOS`, `CONVOCATORIAS`, `CONVOCATORIA_DETALLE`, `PARTICIPACION_PARTIDO`, `COMUNICACIONES`, `BITACORA`, `PANEL`.
+- `PANEL` es landing y ayuda. No es fuente de verdad ni almacena estado autoritativo.
