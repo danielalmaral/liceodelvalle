@@ -44,7 +44,16 @@ function bootstrap(overrides = {}) {
     },
     referenceData: {
       authoritativeConvocations: [],
-      convocationProposals: [{ CONVOCATORIA_ID: 'CON-001', PARTIDO_ID: 'PAR-001', ESTADO: 'PROPUESTA', TOTAL_OBJETIVO: 12 }],
+      convocationProposals: [{
+        CONVOCATORIA_ID: 'CON-001',
+        PARTIDO_ID: 'PAR-001',
+        ESTADO: 'PROPUESTA',
+        TOTAL_OBJETIVO: 12,
+        MIN_PORTEROS_SNAPSHOT: 1,
+        MIN_DEFENSAS_SNAPSHOT: 1,
+        MIN_MEDIOS_SNAPSHOT: 0,
+        MIN_DELANTEROS_SNAPSHOT: 0
+      }],
       openSessions: [{ sesionId: 'SES-001', competencia: 'A', fecha: '2026-02-01' }],
       playedMatches: [],
       programmedMatches: [{
@@ -176,6 +185,7 @@ test('APP_STALE_ROUTE_RESPONSE_TEST', () => {
   controller.route('convocations');
   calls[0].onSuccess({ ok: true, data: bootstrap() });
   calls[1].onSuccess({ ok: true, data: bootstrap() });
+  calls[2].onSuccess({ ok: true, data: convocationView() });
   assert.deepEqual(rendered, ['convocations']);
 });
 
@@ -313,7 +323,7 @@ test('APP_ATTENDANCE_ACTION_A_R_F_TEST', () => {
       calls.push({ name, args });
       onSuccess({ ok: true, data: {} });
     },
-    state: bootstrap(),
+    state: { activeRoute: 'attendance', ...bootstrap() },
     render: {}
   });
   controller.markAttendance('SES-001', 'ALU-001', 'A');
@@ -349,6 +359,40 @@ test('APP_ATTENDANCE_ROUTE_PRESERVED_AFTER_WRITE_TEST', () => {
   assert.equal(state.renderedRoute, 'attendance');
 });
 
+test('APP_ATTENDANCE_ROUTE_AUTO_HYDRATE_TEST', () => {
+  const calls = [];
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) {
+      calls.push({ name, args });
+      if (name === 'getAppBootstrap') onSuccess({ ok: true, data: bootstrap() });
+      if (name === 'getPanelAttendance') onSuccess({ ok: true, data: { sessionId: args[0], rows: [] } });
+    },
+    state: {},
+    render: { loading() {}, route() {} }
+  });
+  controller.route('attendance');
+  assert.deepEqual(calls.map((call) => call.name), ['getAppBootstrap', 'getPanelAttendance']);
+  assert.equal(calls[1].args[0], 'SES-001');
+});
+
+test('APP_ATTENDANCE_ROUTE_EMPTY_TEST', () => {
+  const calls = [];
+  const state = {};
+  const rendered = [];
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) {
+      calls.push({ name, args });
+      onSuccess({ ok: true, data: bootstrap({ referenceData: { ...bootstrap().referenceData, openSessions: [] } }) });
+    },
+    state,
+    render: { loading() {}, route(route) { rendered.push(route); } }
+  });
+  controller.route('attendance');
+  assert.deepEqual(calls.map((call) => call.name), ['getAppBootstrap']);
+  assert.deepEqual(state.attendance, { rows: [] });
+  assert.deepEqual(rendered, ['attendance']);
+});
+
 test('APP_CONVOCATION_REFERENCE_LAYOUT_TEST', () => {
   const html = createAppRenderer({ state: { activeRoute: 'convocations', ...bootstrap(), convocation: convocationView() } }).renderConvocations();
   ['kpi-grid--five', 'stepper', 'convocation-main', 'side-panel', 'Acciones'].forEach((term) => assert.equal(html.includes(term), true));
@@ -367,16 +411,22 @@ test('APP_CONVOCATION_DYNAMIC_TARGET_TEST', () => {
 });
 
 test('APP_CONVOCATION_DYNAMIC_POSITION_MINIMA_TEST', () => {
-  const view = convocationView({
-    details: [
-      { ...convocationView().details[0], posicionAsignada: 'PO' },
-      { ...convocationView().details[1], posicionAsignada: 'DEF' },
-      { ...convocationView().details[1], ALUMNO_ID: 'ALU-003', nombre: 'Tres', posicionAsignada: 'MED' },
-      { ...convocationView().details[1], ALUMNO_ID: 'ALU-004', nombre: 'Cuatro', posicionAsignada: 'DEL' }
-    ]
-  });
-  const html = createAppRenderer({ state: { activeRoute: 'convocations', ...bootstrap(), convocation: view } }).renderConvocations();
-  ['PO 1', 'DEF 1', 'MED 1', 'DEL 1'].forEach((term) => assert.equal(html.includes(term), true));
+  const data = bootstrap();
+  data.referenceData.convocationProposals[0] = {
+    ...data.referenceData.convocationProposals[0],
+    MIN_PORTEROS_SNAPSHOT: 2,
+    MIN_DEFENSAS_SNAPSHOT: 5,
+    MIN_MEDIOS_SNAPSHOT: 3,
+    MIN_DELANTEROS_SNAPSHOT: 2
+  };
+  const details = [
+    { ...convocationView().details[0], ALUMNO_ID: 'PO-1', posicionAsignada: 'PO', seleccionadoFinal: true },
+    ...Array.from({ length: 4 }, (_, index) => ({ ...convocationView().details[1], ALUMNO_ID: `DEF-${index}`, nombre: `Def ${index}`, posicionAsignada: 'DEF', seleccionadoFinal: true })),
+    ...Array.from({ length: 3 }, (_, index) => ({ ...convocationView().details[1], ALUMNO_ID: `MED-${index}`, nombre: `Med ${index}`, posicionAsignada: 'MED', seleccionadoFinal: true })),
+    ...Array.from({ length: 2 }, (_, index) => ({ ...convocationView().details[1], ALUMNO_ID: `DEL-${index}`, nombre: `Del ${index}`, posicionAsignada: 'DEL', seleccionadoFinal: true }))
+  ];
+  const html = createAppRenderer({ state: { activeRoute: 'convocations', ...data, convocation: convocationView({ details }) } }).renderConvocations();
+  ['PO 1/2', 'DEF 4/5', 'MED 3/3', 'DEL 2/2'].forEach((term) => assert.equal(html.includes(term), true));
 });
 
 test('APP_CONVOCATION_ELIGIBILITY_TEST', () => {
@@ -393,10 +443,20 @@ test('APP_CONVOCATION_ROTATION_PRIORITY_TEST', () => {
 });
 
 test('APP_CONVOCATION_EXISTING_RESUME_TEST', () => {
-  const state = { activeRoute: 'convocations', ...bootstrap() };
-  const renderer = createAppRenderer({ state, controller: { loadConvocation(id) { state.loaded = id; } } });
-  const existing = renderer.findConvocationForMatch('PAR-001');
-  assert.equal(existing.CONVOCATORIA_ID, 'CON-001');
+  const calls = [];
+  const state = {};
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) {
+      calls.push({ name, args });
+      if (name === 'getAppBootstrap') onSuccess({ ok: true, data: bootstrap() });
+      if (name === 'getPanelConvocation') onSuccess({ ok: true, data: convocationView() });
+    },
+    state,
+    render: { loading() {}, route() {} }
+  });
+  controller.route('convocations');
+  assert.deepEqual(calls.map((call) => call.name), ['getAppBootstrap', 'getPanelConvocation']);
+  assert.equal(calls[1].args[0], 'CON-001');
 });
 
 test('APP_CONVOCATION_NO_DUPLICATE_GENERATE_TEST', () => {
@@ -441,4 +501,284 @@ test('APP_CONVOCATION_MAIL_DISABLED_TEST', () => {
 test('APP_CONVOCATION_MATCH_SUMMARY_TEST', () => {
   const html = createAppRenderer({ state: { activeRoute: 'convocations', ...bootstrap(), convocation: convocationView() } }).renderConvocations();
   ['Fecha', 'Hora de citacion', 'Hora del partido', 'Rival', 'Sede', 'Competencia', 'Local / visitante', 'Uniforme', 'Indicaciones'].forEach((term) => assert.equal(html.includes(term), true));
+});
+
+test('APP_CONVOCATION_ROUTE_AUTO_RESUME_TEST', () => {
+  const calls = [];
+  const state = {};
+  const rendered = [];
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) {
+      calls.push({ name, args });
+      if (name === 'getAppBootstrap') onSuccess({ ok: true, data: bootstrap() });
+      if (name === 'getPanelConvocation') onSuccess({ ok: true, data: convocationView() });
+    },
+    state,
+    render: { loading() {}, route(route) { rendered.push(route); } }
+  });
+  controller.route('convocations');
+  assert.equal(calls[1].name, 'getPanelConvocation');
+  assert.equal(calls[1].args[0], 'CON-001');
+  assert.equal(state.convocation.details.length, 2);
+  assert.deepEqual(rendered, ['convocations']);
+});
+
+test('APP_CONVOCATION_ROUTE_NO_PROPOSAL_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.convocationProposals = [];
+  data.dashboard.convocationProposals = [];
+  const calls = [];
+  const state = {};
+  const rendered = [];
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) {
+      calls.push({ name, args });
+      onSuccess({ ok: true, data });
+    },
+    state,
+    render: { loading() {}, route(route) { rendered.push(route); } }
+  });
+  controller.route('convocations');
+  assert.deepEqual(calls.map((call) => call.name), ['getAppBootstrap']);
+  assert.equal(state.convocation.details.length, 0);
+  assert.deepEqual(rendered, ['convocations']);
+});
+
+test('APP_ATTENDANCE_STALE_RESPONSE_TEST', () => {
+  const calls = [];
+  const rendered = [];
+  const state = {};
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) { calls.push({ name, args, onSuccess }); },
+    state,
+    render: { loading() {}, route(route) { rendered.push(route); } }
+  });
+  controller.route('attendance');
+  calls[0].onSuccess({ ok: true, data: bootstrap() });
+  controller.route('students');
+  calls[1].onSuccess({ ok: true, data: { sessionId: 'SES-001', rows: [{ nombre: 'Late' }] } });
+  calls[2].onSuccess({ ok: true, data: bootstrap() });
+  assert.equal(state.activeRoute, 'students');
+  assert.equal(state.attendance, undefined);
+  assert.deepEqual(rendered, ['students']);
+});
+
+test('APP_ATTENDANCE_SESSION_RACE_TEST', () => {
+  const calls = [];
+  const state = { activeRoute: 'attendance', ...bootstrap(), selectedSessionId: 'SES-001' };
+  state.referenceData.openSessions.push({ sesionId: 'SES-002', competencia: 'A' });
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) { calls.push({ name, args, onSuccess }); },
+    state,
+    render: { route() {} }
+  });
+  controller.loadAttendance('SES-001');
+  controller.loadAttendance('SES-002');
+  calls[1].onSuccess({ ok: true, data: { sessionId: 'SES-002', rows: [{ nombre: 'Fresh' }] } });
+  calls[0].onSuccess({ ok: true, data: { sessionId: 'SES-001', rows: [{ nombre: 'Late' }] } });
+  assert.equal(state.selectedSessionId, 'SES-002');
+  assert.equal(state.attendance.rows[0].nombre, 'Fresh');
+});
+
+test('APP_CONVOCATION_STALE_RESPONSE_TEST', () => {
+  const calls = [];
+  const state = { activeRoute: 'convocations', ...bootstrap(), selectedProgrammedMatchId: 'PAR-001' };
+  state.referenceData.programmedMatches.push({ partidoId: 'PAR-002', competencia: 'A', rival: 'Rival B' });
+  state.referenceData.convocationProposals.push({ CONVOCATORIA_ID: 'CON-002', PARTIDO_ID: 'PAR-002', ESTADO: 'PROPUESTA', TOTAL_OBJETIVO: 12 });
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) { calls.push({ name, args, onSuccess }); },
+    state,
+    render: { route() {} }
+  });
+  controller.loadConvocation('CON-001', undefined, 'PAR-001');
+  state.selectedProgrammedMatchId = 'PAR-002';
+  controller.loadConvocation('CON-002', undefined, 'PAR-002');
+  calls[1].onSuccess({ ok: true, data: convocationView({ convocationId: 'CON-002', details: [{ nombre: 'Fresh' }] }) });
+  calls[0].onSuccess({ ok: true, data: convocationView({ convocationId: 'CON-001', details: [{ nombre: 'Late' }] }) });
+  assert.equal(state.selectedConvocationId, 'CON-002');
+  assert.equal(state.convocation.details[0].nombre, 'Fresh');
+});
+
+test('APP_GENERATE_CONVOCATION_REAL_RESPONSE_SHAPE_TEST', () => {
+  const calls = [];
+  const generatedData = bootstrap();
+  generatedData.referenceData.convocationProposals = [{ CONVOCATORIA_ID: 'CON-NEW', PARTIDO_ID: 'PAR-001', ESTADO: 'PROPUESTA', TOTAL_OBJETIVO: 12 }];
+  const state = { activeRoute: 'convocations', ...bootstrap({ referenceData: { ...bootstrap().referenceData, convocationProposals: [] } }) };
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) {
+      calls.push({ name, args, onSuccess });
+      if (name === 'commandGenerateConvocation') onSuccess({ ok: true, data: { convocation: { CONVOCATORIA_ID: 'CON-NEW' }, details: [] } });
+      if (name === 'getAppBootstrap') onSuccess({ ok: true, data: generatedData });
+      if (name === 'getPanelConvocation') onSuccess({ ok: true, data: convocationView({ convocationId: 'CON-NEW' }) });
+    },
+    state,
+    render: { route() {} }
+  });
+  controller.generateConvocation('PAR-001');
+  assert.deepEqual(calls.map((call) => call.name), ['commandGenerateConvocation', 'getAppBootstrap', 'getPanelConvocation']);
+  assert.equal(calls[2].args[0], 'CON-NEW');
+});
+
+test('APP_GENERATE_CONVOCATION_IN_FLIGHT_GUARD_TEST', () => {
+  const calls = [];
+  const state = { activeRoute: 'convocations', ...bootstrap({ referenceData: { ...bootstrap().referenceData, convocationProposals: [] } }) };
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) { calls.push({ name, args, onSuccess }); },
+    state,
+    render: { route() {} }
+  });
+  controller.generateConvocation('PAR-001');
+  controller.generateConvocation('PAR-001');
+  assert.equal(calls.filter((call) => call.name === 'commandGenerateConvocation').length, 1);
+});
+
+test('APP_GENERATE_CONVOCATION_REFRESHES_REFERENCE_TEST', () => {
+  const state = { activeRoute: 'convocations', ...bootstrap(), convocationGeneratePending: false };
+  const html = createAppRenderer({ state }).renderConvocations();
+  assert.match(html, /data-action="convocation-generate"[^>]*disabled/);
+});
+
+test('APP_CONVOCATION_FILTER_SEARCH_TEST', () => {
+  const state = { activeRoute: 'convocations', ...bootstrap(), convocation: convocationView(), convocationFilters: { search: 'Dos' } };
+  const html = createAppRenderer({ state }).renderConvocations();
+  assert.equal(html.includes('Alumno Dos'), true);
+  assert.equal(html.includes('Alumno Ficticio'), false);
+});
+
+test('APP_CONVOCATION_FILTER_SELECTED_TEST', () => {
+  const view = convocationView({ details: [{ ...convocationView().details[0], seleccionadoFinal: false }, convocationView().details[1]] });
+  const html = createAppRenderer({ state: { activeRoute: 'convocations', ...bootstrap(), convocation: view, convocationFilters: { selected: 'SELECTED' } } }).renderConvocations();
+  assert.equal(html.includes('Alumno Dos'), true);
+  assert.equal(html.includes('Alumno Ficticio'), false);
+});
+
+test('APP_CONVOCATION_FILTER_POSITION_TEST', () => {
+  const html = createAppRenderer({ state: { activeRoute: 'convocations', ...bootstrap(), convocation: convocationView(), convocationFilters: { position: 'PO' } } }).renderConvocations();
+  assert.equal(html.includes('Alumno Ficticio'), true);
+  assert.equal(html.includes('Alumno Dos'), false);
+});
+
+test('APP_CONVOCATION_FILTER_PRIORITY_TEST', () => {
+  const html = createAppRenderer({ state: { activeRoute: 'convocations', ...bootstrap(), convocation: convocationView(), convocationFilters: { priority: 'YES' } } }).renderConvocations();
+  assert.equal(html.includes('PRIORIDAD'), true);
+  assert.equal(html.includes('Alumno Dos'), false);
+});
+
+test('APP_CONVOCATION_FILTER_ELIGIBILITY_TEST', () => {
+  const view = convocationView({ details: [{ ...convocationView().details[0], ELEGIBILITY_STATUS: 'PENDING' }, convocationView().details[1]] });
+  const html = createAppRenderer({ state: { activeRoute: 'convocations', ...bootstrap(), convocation: view, convocationFilters: { eligibility: 'PENDING' } } }).renderConvocations();
+  assert.equal(html.includes('Pendiente'), true);
+  assert.equal(html.includes('Alumno Dos'), false);
+});
+
+test('APP_CONVOCATION_FILTER_LEVEL_TEST', () => {
+  const html = createAppRenderer({ state: { activeRoute: 'convocations', ...bootstrap(), convocation: convocationView(), convocationFilters: { level: 'A2' } } }).renderConvocations();
+  assert.equal(html.includes('Alumno Dos'), true);
+  assert.equal(html.includes('Alumno Ficticio'), false);
+});
+
+test('APP_CONVOCATION_FILTER_STAYS_ON_ROUTE_TEST', () => {
+  const state = { activeRoute: 'convocations', ...bootstrap(), convocation: convocationView(), convocationFilters: { search: 'Alumno' } };
+  const html = createAppRenderer({ state }).renderConvocationFilters();
+  assert.equal(html.includes('data-filter='), false);
+  assert.equal(html.includes('data-convocation-filter'), true);
+  createAppRenderer({ state }).render('convocations');
+  assert.equal(state.activeRoute, 'convocations');
+});
+
+test('APP_CONVOCATION_STEPPER_NO_PROPOSAL_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.convocationProposals = [];
+  const html = createAppRenderer({ state: { activeRoute: 'convocations', ...data, convocation: { details: [] } } }).renderConvocations();
+  assert.match(html, /<li class="is-active">Propuesta generada/);
+});
+
+test('APP_CONVOCATION_STEPPER_PROPOSAL_TEST', () => {
+  const html = createAppRenderer({ state: { activeRoute: 'convocations', ...bootstrap(), convocation: convocationView() } }).renderConvocations();
+  assert.match(html, /<li class="is-done">Propuesta generada/);
+  assert.match(html, /<li class="is-active">Revision del entrenador/);
+});
+
+test('APP_CONVOCATION_STEPPER_APPROVED_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.convocationProposals = [];
+  data.referenceData.authoritativeConvocations = [{ ...bootstrap().referenceData.convocationProposals[0], ESTADO: 'APROBADA' }];
+  const html = createAppRenderer({ state: { activeRoute: 'convocations', ...data, convocation: convocationView() } }).renderConvocations();
+  assert.match(html, /Convocatoria aprobada/);
+  assert.match(html, /<li class="is-active">Comunicaciones/);
+});
+
+test('APP_CONVOCATION_STEPPER_SENT_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.convocationProposals = [];
+  data.referenceData.authoritativeConvocations = [{ ...bootstrap().referenceData.convocationProposals[0], ESTADO: 'ENVIADA' }];
+  const html = createAppRenderer({ state: { activeRoute: 'convocations', ...data, convocation: convocationView() } }).renderConvocations();
+  assert.match(html, /<li class="is-active">Partido/);
+});
+
+test('APP_CONVOCATION_STEPPER_CLOSED_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.convocationProposals = [];
+  data.referenceData.authoritativeConvocations = [{ ...bootstrap().referenceData.convocationProposals[0], ESTADO: 'CERRADA' }];
+  const html = createAppRenderer({ state: { activeRoute: 'convocations', ...data, convocation: convocationView() } }).renderConvocations();
+  assert.equal((html.match(/is-done/g) || []).length >= 5, true);
+});
+
+test('APP_CONVOCATION_AUTHORITATIVE_READONLY_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.convocationProposals = [];
+  data.referenceData.authoritativeConvocations = [{ ...bootstrap().referenceData.convocationProposals[0], ESTADO: 'APROBADA' }];
+  const html = createAppRenderer({ state: { activeRoute: 'convocations', ...data, convocation: convocationView() } }).renderConvocations();
+  assert.match(html, /data-action="convocation-selection"[^>]*disabled/);
+  assert.match(html, /data-action="convocation-position"[^>]*disabled/);
+});
+
+test('APP_CONVOCATION_ACTION_GATING_TEST', () => {
+  const proposalHtml = createAppRenderer({ state: { activeRoute: 'convocations', ...bootstrap(), convocation: convocationView() } }).renderConvocations();
+  assert.match(proposalHtml, /data-action="convocation-approve"[^>]*(?<!disabled)>Aprobar convocatoria/);
+  assert.match(proposalHtml, /data-action="communication-prepare"[^>]*disabled/);
+  const approved = bootstrap();
+  approved.referenceData.convocationProposals = [];
+  approved.referenceData.authoritativeConvocations = [{ ...bootstrap().referenceData.convocationProposals[0], ESTADO: 'APROBADA' }];
+  const approvedHtml = createAppRenderer({ state: { activeRoute: 'convocations', ...approved, convocation: convocationView() } }).renderConvocations();
+  assert.match(approvedHtml, /data-action="convocation-approve"[^>]*disabled/);
+  assert.match(approvedHtml, /data-action="communication-prepare"[^>]*(?<!disabled)>Preparar comunicaciones/);
+  const sent = bootstrap();
+  sent.referenceData.convocationProposals = [];
+  sent.referenceData.authoritativeConvocations = [{ ...bootstrap().referenceData.convocationProposals[0], ESTADO: 'ENVIADA' }];
+  const sentHtml = createAppRenderer({ state: { activeRoute: 'convocations', ...sent, convocation: convocationView() } }).renderConvocations();
+  assert.match(sentHtml, /data-action="communication-prepare"[^>]*disabled/);
+});
+
+test('APP_GLOBAL_COMPETITION_MATCH_FILTER_TEST', () => {
+  const data = bootstrap();
+  data.dashboard.upcomingMatches.push({ partidoId: 'PAR-B', competencia: 'B', rival: 'Rival B' });
+  data.referenceData.programmedMatches.push({ partidoId: 'PAR-B', competencia: 'B', rival: 'Rival B' });
+  const state = { activeRoute: 'dashboard', selectedCompetition: 'A', ...data };
+  const dashboardHtml = createAppRenderer({ state }).renderDashboard();
+  const convocationHtml = createAppRenderer({ state: { ...state, activeRoute: 'convocations', convocation: convocationView() } }).renderConvocations();
+  assert.equal(dashboardHtml.includes('Rival A'), true);
+  assert.equal(dashboardHtml.includes('Rival B'), false);
+  assert.equal(convocationHtml.includes('PAR-B'), false);
+});
+
+test('APP_GLOBAL_COMPETITION_ATTENDANCE_FILTER_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.openSessions = [
+    { sesionId: 'SES-GEN', competencia: 'GENERAL' },
+    { sesionId: 'SES-A', competencia: 'A' },
+    { sesionId: 'SES-B', competencia: 'B' }
+  ];
+  const html = createAppRenderer({ state: { activeRoute: 'attendance', selectedCompetition: 'A', ...data, attendance: { rows: [] } } }).renderAttendance();
+  assert.equal(html.includes('SES-GEN'), true);
+  assert.equal(html.includes('SES-A'), true);
+  assert.equal(html.includes('SES-B'), false);
+});
+
+test('APP_NO_UNDEFINED_NULL_RENDER_TEST', () => {
+  const data = bootstrap({ dashboard: { attendanceSummary: {}, communications: {}, upcomingMatches: [], sportAlerts: [], readinessIssues: [] } });
+  const html = createAppRenderer({ state: { activeRoute: 'dashboard', ...data } }).renderDashboard();
+  assert.equal(html.includes('undefined'), false);
+  assert.equal(html.includes('>null<'), false);
+  assert.equal(html.includes('[object Object]'), false);
 });
