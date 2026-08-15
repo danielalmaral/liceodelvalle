@@ -2,15 +2,27 @@ function safePanelResponse(callback) {
   try {
     return { ok: true, data: callback() };
   } catch (error) {
+    var rawCode = String(error && error.message ? error.message : 'PANEL_ERROR').split(':')[0];
     return {
       ok: false,
-      code: String(error && error.message ? error.message : 'PANEL_ERROR').split(':')[0],
+      code: rawCode
+        .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig, '[email]')
+        .replace(/(?:\+?\d[\s.-]?){10,}/g, '[number]'),
       message: 'No se pudo completar la operacion solicitada.'
     };
   }
 }
 
+var panelRuntimeFactoryForTest = null;
+
+function setPanelRuntimeFactoryForTest(factory) {
+  panelRuntimeFactoryForTest = factory;
+}
+
 function panelRuntime() {
+  if (panelRuntimeFactoryForTest) {
+    return panelRuntimeFactoryForTest();
+  }
   return createLdvAppsScriptRuntime();
 }
 
@@ -50,7 +62,17 @@ function getPanelParticipation(matchId) {
 
 function commandCreateSession(input) {
   return withPanelOperation('createSession', function(runtime, operationId) {
-    return runtime.commands.createSession(input, { operationId: operationId, actor: input && input.actor });
+    var source = input || {};
+    var dto = {
+      TIPO: source.TIPO || source.tipo,
+      FECHA: source.FECHA || source.fecha,
+      HORA_INICIO: source.HORA_INICIO || source.horaInicio,
+      HORA_FIN: source.HORA_FIN || source.horaFin,
+      COMPETENCIA: source.COMPETENCIA || source.competencia,
+      PARTIDO_ID: source.PARTIDO_ID || source.partidoId,
+      DESCRIPCION: source.DESCRIPCION || source.descripcion
+    };
+    return runtime.commands.createSession(dto, { operationId: operationId, actor: source.actor });
   });
 }
 
@@ -61,20 +83,49 @@ function commandCloseSession(sessionId, actor) {
 }
 
 function commandCreateAttendance(input) {
-  return safePanelResponse(function() { return panelRuntime().commands.createAttendance(input); });
+  return safePanelResponse(function() {
+    var source = input || {};
+    return panelRuntime().commands.createAttendance({
+      sesionId: source.sesionId || source.SESION_ID,
+      alumnoId: source.alumnoId || source.ALUMNO_ID,
+      estado: source.estado || source.ESTADO
+    });
+  });
 }
 
 function commandResolveAbsence(attendanceId, targetState, options) {
   return withPanelOperation('resolveAbsence', function(runtime, operationId) {
-    options = options || {};
-    options.operationId = operationId;
-    return runtime.commands.resolveAbsence(attendanceId, targetState, options);
+    var source = options || {};
+    var target = String(targetState || '').trim().toUpperCase();
+    if (target !== 'FJ' && target !== 'LES') {
+      throw new Error('PANEL_ABSENCE_TARGET_REJECTED');
+    }
+    return runtime.commands.resolveAbsence(attendanceId, target, {
+      actor: source.actor,
+      operationId: operationId,
+      reason: source.reason
+    });
   });
 }
 
 function commandCreateMatch(input) {
   return withPanelOperation('createMatch', function(runtime, operationId) {
-    return runtime.commands.createMatch(input, { operationId: operationId, actor: input && input.actor });
+    var source = input || {};
+    var dto = {
+      COMPETENCIA: source.COMPETENCIA || source.competencia,
+      JORNADA: source.JORNADA !== undefined ? source.JORNADA : source.jornada,
+      RIVAL: source.RIVAL || source.rival,
+      FECHA: source.FECHA || source.fecha,
+      HORA_CITACION: source.HORA_CITACION || source.horaCitacion,
+      HORA_PARTIDO: source.HORA_PARTIDO || source.horaPartido,
+      SEDE: source.SEDE || source.sede,
+      LOCAL_VISITANTE: source.LOCAL_VISITANTE || source.localVisitante,
+      DURACION_MINUTOS: source.DURACION_MINUTOS !== undefined ? source.DURACION_MINUTOS : source.duracionMinutos,
+      UNIFORME: source.UNIFORME || source.uniforme,
+      INDICACIONES: source.INDICACIONES || source.indicaciones,
+      OBSERVACIONES: source.OBSERVACIONES || source.observaciones
+    };
+    return runtime.commands.createMatch(dto, { operationId: operationId, actor: source.actor });
   });
 }
 
@@ -136,7 +187,27 @@ function commandSendPendingCommunications() {
 
 function commandCreateParticipation(input) {
   return withPanelOperation('createParticipation', function(runtime, operationId) {
-    return runtime.commands.createParticipation(input, { operationId: operationId, actor: input && input.actor });
+    var source = input || {};
+    var dto = {};
+    [
+      'PARTIDO_ID',
+      'ALUMNO_ID',
+      'CONVOCATORIA_ID',
+      'ASISTIO',
+      'ASISTENCIA_ESTADO',
+      'CONDICION_INICIAL',
+      'MINUTOS_JUGADOS',
+      'GOLES',
+      'AMARILLAS',
+      'ROJAS',
+      'CALIFICACION',
+      'OBSERVACIONES'
+    ].forEach(function(field) {
+      if (source[field] !== undefined) {
+        dto[field] = source[field];
+      }
+    });
+    return runtime.commands.createParticipation(dto, { operationId: operationId, actor: source.actor });
   });
 }
 
@@ -169,6 +240,7 @@ if (typeof module !== 'undefined') {
     getPanelConvocation,
     getPanelDashboard,
     getPanelParticipation,
-    safePanelResponse
+    safePanelResponse,
+    setPanelRuntimeFactoryForTest
   };
 }

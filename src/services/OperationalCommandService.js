@@ -3,6 +3,7 @@ function createOperationalCommandService(dependencies) {
   var services = dependencies.services || {};
   var repositories = dependencies.repositories || {};
   var idGenerator = dependencies.idGenerator || {};
+  var runtimeCapabilities = dependencies.runtimeCapabilities || {};
   var auditedFields = ['MINUTOS_JUGADOS', 'GOLES', 'AMARILLAS', 'ROJAS', 'CALIFICACION'];
 
   if (typeof idGenerator.operationId !== 'function') {
@@ -742,6 +743,10 @@ function createOperationalCommandService(dependencies) {
         MOTIVO: 'SEND_ATTEMPT'
       };
     });
+
+    if (runtimeCapabilities.externalMailEnabled === false) {
+      throw utils.createDomainError('MAIL_EXTERNAL_DISABLED', 'sendPendingCommunications');
+    }
 
     return runAudited(opId, {
       command: 'SEND_PENDING_COMMUNICATIONS',

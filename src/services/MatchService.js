@@ -162,6 +162,19 @@ function createMatchService(dependencies) {
       throw utils.createDomainError('MATCH_UPDATE_STATE_INVALID', id);
     }
 
+    Object.keys(updates || {}).forEach(function(field) {
+      var normalized = String(field).toUpperCase();
+      if (normalized === 'PARTIDO_ID' || field === 'partidoId') {
+        throw utils.createDomainError('MATCH_UPDATE_ID_BYPASS_REJECTED', id);
+      }
+      if (normalized === 'ESTADO' || field === 'estado') {
+        throw utils.createDomainError('MATCH_UPDATE_STATE_BYPASS_REJECTED', id);
+      }
+      if (normalized === 'GOLES_FAVOR' || normalized === 'GOLES_CONTRA' || field === 'golesFavor' || field === 'golesContra') {
+        throw utils.createDomainError('MATCH_UPDATE_SCORE_BYPASS_REJECTED', id);
+      }
+    });
+
     next = rowFromInput(updates || {}, current);
     if (next.PARTIDO_ID !== id) {
       throw utils.createDomainError('MATCH_IDENTITY_MUTATION', id);

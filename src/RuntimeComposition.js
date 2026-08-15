@@ -4,6 +4,9 @@ function createAppsScriptRuntime(options) {
   var triggerFactory = options.createTriggerHandlers || createTriggerHandlers;
   var lock = options.lock;
   var spreadsheetId = environment.spreadsheetId || (typeof environment.getSpreadsheetId === 'function' ? environment.getSpreadsheetId() : '');
+  var runtimeCapabilities = {
+    externalMailEnabled: typeof environment.getExternalMailEnabled === 'function' ? environment.getExternalMailEnabled() : options.externalMailEnabled !== false
+  };
   var repositories = {};
   var constructors = options.constructors || {};
   var requiredRepositories = [
@@ -192,6 +195,7 @@ function createAppsScriptRuntime(options) {
   var operationalCommandService = requireConstructor('createOperationalCommandService')({
     idGenerator: options.idGenerator,
     repositories: repositories,
+    runtimeCapabilities: runtimeCapabilities,
     services: services,
     utils: options.utils
   });
@@ -243,6 +247,7 @@ function createAppsScriptRuntime(options) {
     validateMatchParticipationReadiness: function(matchId) { return participationService.validateMatchParticipationReadiness(matchId); }
   };
   var panelQueryService = requireConstructor('createPanelQueryService')({
+    clock: options.clock,
     configService: configService,
     convocationRepository: repositories.convocationRepository,
     detailRepository: repositories.detailRepository,
@@ -252,6 +257,9 @@ function createAppsScriptRuntime(options) {
   queries.getPanelConvocation = function(convocationId) { return panelQueryService.getConvocationView(convocationId); };
   queries.getPanelDashboard = function() { return panelQueryService.getDashboard(); };
   queries.getPanelParticipation = function(matchId) { return panelQueryService.getParticipationView(matchId); };
+  queries.getRuntimeCapabilities = function() {
+    return { externalMailEnabled: runtimeCapabilities.externalMailEnabled };
+  };
 
   return {
     commands: commands,

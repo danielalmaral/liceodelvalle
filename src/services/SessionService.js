@@ -80,9 +80,6 @@ function createSessionService(dependencies) {
       if (partidoId) {
         throw utils.createDomainError('SESSION_TRAINING_MATCH_NOT_EMPTY', sessionId);
       }
-      if (competencia !== 'GENERAL') {
-        throw utils.createDomainError('SESSION_TRAINING_COMPETITION_INVALID', sessionId);
-      }
     }
 
     if (tipo === 'PARTIDO') {

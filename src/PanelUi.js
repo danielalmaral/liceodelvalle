@@ -18,17 +18,21 @@ function getLdvPanelHtml() {
     '<button data-view="postmatch">Post Partido</button>',
     '<button data-view="alerts">Alertas</button>',
     '</nav>',
-    '<main><h2>Dashboard</h2><section id="content" class="grid">',
-    '<div class="card">Sesion actual/proxima<br><span class="muted" id="session-card">Cargando...</span></div>',
-    '<div class="card">Pendientes de asistencia<br><span class="muted" id="attendance-card">Cargando...</span></div>',
-    '<div class="card">Faltas por justificar<br><span class="muted" id="absence-card">Cargando...</span></div>',
-    '<div class="card">Comunicaciones<br><span class="muted" id="communication-card">Cargando...</span></div>',
-    '<div class="card">Convocatorias pendientes<br><span class="muted" id="convocation-card">Cargando...</span></div>',
-    '<div class="card">Alertas deportivas<br><span class="muted" id="alert-card">Cargando...</span></div>',
-    '</section><p class="muted">Panel operativo. Los cambios se ejecutan desde comandos del backend.</p></main>',
+    '<main><h2 id="view-title">Dashboard</h2><section id="content" class="grid"></section><p id="panel-error" class="danger"></p></main>',
     '<script>',
-    'function write(id,text){document.getElementById(id).textContent=text;}',
-    'if (google&&google.script&&google.script.run){google.script.run.withSuccessHandler(function(r){var d=r&&r.data||{};write("session-card",(d.openSessions||[]).length+" abiertas");write("attendance-card",d.attendanceMissing||0);write("absence-card",d.pendingAbsences||0);write("communication-card",((d.communications||{}).pending||0)+" pendientes / "+((d.communications||{}).error||0)+" error");write("convocation-card",Object.keys(d.convocationStatusByMatch||{}).length);write("alert-card",(d.sportAlerts||[]).length);}).getPanelDashboard();}',
+    'var currentView="dashboard";',
+    'function esc(v){return String(v==null?"":v).replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});}',
+    'function safe(r){if(!r||!r.ok){document.getElementById("panel-error").textContent=(r&&r.code)||"ERROR";return null;}document.getElementById("panel-error").textContent="";return r.data;}',
+    'function card(t,v){return "<div class=card>"+esc(t)+"<br><span class=muted>"+esc(v)+"</span></div>";}',
+    'function run(name,args,cb){google.script.run.withSuccessHandler(function(r){cb(safe(r));})[name].apply(google.script.run,args||[]);}',
+    'function renderDashboard(d){if(!d)return;document.getElementById("content").className="grid";document.getElementById("content").innerHTML=card("Sesion actual/proxima",(d.currentSession&&d.currentSession.sesionId)||(d.nextSession&&d.nextSession.sesionId)||"") + card("Asistencias",(d.attendanceSummary||{}).captured+"/"+(d.attendanceSummary||{}).expected) + card("Faltas pendientes",d.pendingAbsences) + card("Proximo vencimiento",d.nextAbsenceDeadline||"") + card("Vencidas",d.expiredAbsences) + card("Comunicaciones",((d.communications||{}).pending||0)+" pendientes / "+((d.communications||{}).error||0)+" error / "+((d.communications||{}).uncertainDelivery||0)+" inciertas") + card("Alertas",(d.sportAlerts||[]).length);}',
+    'function renderAttendance(d){if(!d)return;var rows=(d.rows||[]).map(function(r){var actions=r.estadoActual==="F"?"<button onclick=\\"resolveAbsence(\\\'"+r.studentId+"\\\',\\\'FJ\\\')\\">FJ</button><button onclick=\\"resolveAbsence(\\\'"+r.studentId+"\\\',\\\'LES\\\')\\">LES</button>":(r.capabilities&&r.capabilities.canMarkAttendance?"<button onclick=\\"markAttendance(\\\'"+r.studentId+"\\\',\\\'A\\\')\\">A</button><button onclick=\\"markAttendance(\\\'"+r.studentId+"\\\',\\\'R\\\')\\">R</button><button onclick=\\"markAttendance(\\\'"+r.studentId+"\\\',\\\'F\\\')\\">F</button>":"");return "<tr><td>"+esc(r.nombre)+"</td><td>"+esc(r.estadoActual)+"</td><td>"+actions+"</td></tr>";}).join("");document.getElementById("content").className="";document.getElementById("content").innerHTML="<table><tbody>"+rows+"</tbody></table>";}',
+    'function renderSimple(title,html){document.getElementById("content").className="";document.getElementById("content").innerHTML=html||card(title,"Sin datos");}',
+    'function load(view){currentView=view;document.getElementById("view-title").textContent=view; if(view==="dashboard")run("getPanelDashboard",[],renderDashboard); else if(view==="attendance")run("getPanelAttendance",[""],renderAttendance); else if(view==="matches")renderSimple("Partidos","<button onclick=\\"commandCreateMatch({})\\">Crear</button><button>Editar PROGRAMADO</button><button>Marcar JUGADO</button><button>Cancelar</button>"); else if(view==="convocations")renderSimple("Convocatorias","<button>Generar propuesta</button><button>Seleccionar</button><button>Asignar posicion</button><label>motivo obligatorio</label><button>Aprobar</button><button>Preparar comunicaciones</button><button id=\\"send-pending\\" disabled>Enviar pendientes</button><span class=muted>PENDING e INELIGIBLE no seleccionables</span>"); else if(view==="postmatch")renderSimple("Post Partido","<button>Guardar participacion</button><span class=muted>ASISTENCIA_ESTADO es lectura</span>"); else if(view==="alerts")renderSimple("Alertas","FI / RED_CARD_REVIEW_REQUIRED / LOW_PARTICIPATION_STREAK / communication ERROR / DELIVERY_ATTEMPT_IN_PROGRESS");}',
+    'function markAttendance(studentId,estado){run("commandCreateAttendance",[{alumnoId:studentId,estado:estado}],function(){load("attendance");});}',
+    'function resolveAbsence(studentId,target){run("commandResolveAbsence",[studentId,target,{}],function(){load("attendance");});}',
+    'document.querySelectorAll("button[data-view]").forEach(function(b){b.addEventListener("click",function(){load(b.getAttribute("data-view"));});});',
+    'if (google&&google.script&&google.script.run){load("dashboard");}',
     '</script></body></html>'
   ].join('');
 }
@@ -47,9 +51,21 @@ function onOpen() {
 }
 
 function setupLdvOperationalSheets() {
-  var runtime = createLdvAppsScriptRuntime();
-  var spreadsheet = SpreadsheetApp.openById(runtime.runtime.spreadsheetId);
-  return setupOperationalSheets(spreadsheet, setupSheetWithHeaders);
+  return setupLdvOperationalSheetsWithDependencies({
+    environment: createAppsScriptEnvironmentAdapter(),
+    spreadsheetProvider: SpreadsheetApp,
+    setupFn: setupSheetWithHeaders
+  });
+}
+
+function setupLdvOperationalSheetsWithDependencies(dependencies) {
+  dependencies = dependencies || {};
+  var environment = dependencies.environment || createAppsScriptEnvironmentAdapter(dependencies.propertiesProvider);
+  var spreadsheetProvider = dependencies.spreadsheetProvider || (typeof SpreadsheetApp !== 'undefined' ? SpreadsheetApp : null);
+  var spreadsheet = dependencies.spreadsheet || spreadsheetProvider.openById(environment.getSpreadsheetId());
+  var setupFn = dependencies.setupFn || setupSheetWithHeaders;
+  var setupCore = dependencies.setupOperationalSheets || setupOperationalSheets;
+  return setupCore(spreadsheet, setupFn);
 }
 
 if (typeof module !== 'undefined') {
@@ -57,6 +73,7 @@ if (typeof module !== 'undefined') {
     getLdvPanelHtml,
     onOpen,
     setupLdvOperationalSheets,
+    setupLdvOperationalSheetsWithDependencies,
     showLdvPanel
   };
 }

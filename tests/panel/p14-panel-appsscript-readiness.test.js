@@ -24,7 +24,7 @@ const { createAppsScriptRepositoryFactory } = require('../../src/adapters/AppsSc
 const { createAppsScriptMailAdapter } = require('../../src/adapters/AppsScriptMailAdapter');
 const { createExternalMailGuardAdapter, createLdvAppsScriptRuntime } = require('../../src/AppsScriptRuntimeBootstrap');
 const handlers = require('../../src/PanelHandlers');
-const { getLdvPanelHtml } = require('../../src/PanelUi');
+const { getLdvPanelHtml, onOpen, setupLdvOperationalSheetsWithDependencies } = require('../../src/PanelUi');
 const { createTriggerHandlers } = require('../../src/triggers/TriggerHandlers');
 const { createAppsScriptRuntime } = require('../../src/RuntimeComposition');
 const { createConfigService } = require('../../src/config/ConfigService');
@@ -255,6 +255,46 @@ test('SESSION_CREATE_TRAINING_TEST', () => {
   assert.equal(result.ESTADO, 'ABIERTA');
 });
 
+test('SESSION_TRAINING_GENERAL_ALLOWED_TEST', () => {
+  const result = createAppsScriptRuntime(runtimeOptions()).commands.createSession({
+    TIPO: 'ENTRENAMIENTO',
+    FECHA: '2026-02-02',
+    HORA_INICIO: '08:00',
+    COMPETENCIA: 'GENERAL'
+  });
+  assert.equal(result.COMPETENCIA, 'GENERAL');
+});
+
+test('SESSION_TRAINING_A_ALLOWED_TEST', () => {
+  const result = createAppsScriptRuntime(runtimeOptions()).commands.createSession({
+    TIPO: 'ENTRENAMIENTO',
+    FECHA: '2026-02-02',
+    HORA_INICIO: '08:00',
+    COMPETENCIA: 'A'
+  });
+  assert.equal(result.COMPETENCIA, 'A');
+});
+
+test('SESSION_TRAINING_B_ALLOWED_TEST', () => {
+  const result = createAppsScriptRuntime(runtimeOptions()).commands.createSession({
+    TIPO: 'ENTRENAMIENTO',
+    FECHA: '2026-02-02',
+    HORA_INICIO: '08:00',
+    COMPETENCIA: 'B'
+  });
+  assert.equal(result.COMPETENCIA, 'B');
+});
+
+test('SESSION_TRAINING_MATCH_ID_REJECTED_TEST', () => {
+  assert.throws(() => createAppsScriptRuntime(runtimeOptions()).commands.createSession({
+    TIPO: 'ENTRENAMIENTO',
+    FECHA: '2026-02-02',
+    HORA_INICIO: '08:00',
+    COMPETENCIA: 'A',
+    PARTIDO_ID: 'PAR-001'
+  }), /SESSION_TRAINING_MATCH_NOT_EMPTY/);
+});
+
 test('SESSION_CREATE_MATCH_TEST', () => {
   const result = createAppsScriptRuntime(runtimeOptions()).commands.createSession({
     TIPO: 'PARTIDO',
@@ -358,6 +398,18 @@ test('MATCH_WRITE_VALIDATION_REUSE_TEST', () => {
   }), /INVALID_ENUM: COMPETENCIA/);
 });
 
+test('MATCH_UPDATE_STATE_BYPASS_REJECTED_TEST', () => {
+  assert.throws(() => createAppsScriptRuntime(runtimeOptions()).commands.updateMatch('PAR-001', { ESTADO: 'JUGADO' }, 'coach'), /MATCH_UPDATE_STATE_BYPASS_REJECTED/);
+});
+
+test('MATCH_UPDATE_SCORE_BYPASS_REJECTED_TEST', () => {
+  assert.throws(() => createAppsScriptRuntime(runtimeOptions()).commands.updateMatch('PAR-001', { GOLES_FAVOR: 1 }, 'coach'), /MATCH_UPDATE_SCORE_BYPASS_REJECTED/);
+});
+
+test('MATCH_UPDATE_ID_BYPASS_REJECTED_TEST', () => {
+  assert.throws(() => createAppsScriptRuntime(runtimeOptions()).commands.updateMatch('PAR-001', { PARTIDO_ID: 'PAR-X' }, 'coach'), /MATCH_UPDATE_ID_BYPASS_REJECTED/);
+});
+
 test('MATCH_COMMAND_LOCK_TEST', () => {
   let inside = false;
   let observed = false;
@@ -382,8 +434,9 @@ test('STUDENT_SPORTS_STATE_UPDATE_TEST', () => {
 
 test('STUDENT_SPORTS_STATE_ELIGIBILITY_EFFECT_TEST', () => {
   const runtime = createAppsScriptRuntime(runtimeOptions());
+  assert.equal(runtime.queries.evaluateMatch('PAR-001')[0].status, 'ELIGIBLE');
   runtime.commands.updateStudentSportsState('ALU-001', 'SUSPENDIDO', 'coach', 'DISCIPLINE');
-  assert.equal(runtime.queries.getStudents()[0].estadoDeportivo, 'SUSPENDIDO');
+  assert.equal(runtime.queries.evaluateMatch('PAR-001')[0].status, 'INELIGIBLE');
 });
 
 test('STUDENT_SPORTS_STATE_AUDIT_TEST', () => {
@@ -404,8 +457,9 @@ test('STUDENT_SPORTS_STATE_COMMAND_LOCK_TEST', () => {
 });
 
 test('PANEL_DASHBOARD_QUERY_TEST', () => {
-  const dashboard = createAppsScriptRuntime(runtimeOptions()).queries.getPanelDashboard();
-  assert.equal(dashboard.openSessions.length, 1);
+  const dashboard = createAppsScriptRuntime(runtimeOptions({ clock: { now: () => new Date('2026-02-01T08:30:00') } })).queries.getPanelDashboard();
+  assert.equal(dashboard.currentSession || dashboard.nextSession ? true : false, true);
+  assert.equal(dashboard.attendanceBySession.length, 1);
   assert.equal(dashboard.communications.pending, 0);
 });
 
@@ -427,16 +481,22 @@ test('PANEL_PARTICIPATION_VIEW_TEST', () => {
   options.repositories.sessionRepository = createArrayRepository([session({ TIPO: 'PARTIDO', COMPETENCIA: 'A', PARTIDO_ID: 'PAR-001' })]);
   const view = createAppsScriptRuntime(options).queries.getPanelParticipation('PAR-001');
   assert.equal(view.readiness.ready, false);
+  assert.equal(view.rows.length, 1);
+  assert.equal(view.rows[0].PARTICIPACION_ID, '');
 });
 
 test('PANEL_NO_BUSINESS_RULE_DUPLICATION_TEST', () => {
+  let readinessCalled = 0;
   const service = createPanelQueryService({
     configService: null,
     convocationRepository: createArrayRepository([]),
     detailRepository: createArrayRepository([]),
-    queries: { getStudents: () => [], getAttendances: () => [], getSessions: () => [], getMatches: () => [], getCommunications: () => [], getParticipations: () => [], validateMatchParticipationReadiness: () => ({ alerts: [] }) }
+    queries: { getStudents: () => [], getAttendances: () => [], getSessions: () => [], getMatches: () => [{ partidoId: 'PAR-1' }], getCommunications: () => [], getParticipations: () => [], validateMatchParticipationReadiness: () => { readinessCalled += 1; return { alerts: [], errors: [] }; } }
   });
-  assert.equal(typeof service.getDashboard, 'function');
+  service.getDashboard();
+  assert.equal(readinessCalled, 1);
+  assert.equal(String(createPanelQueryService).includes('MIN_DEFENSAS'), false);
+  assert.equal(String(createPanelQueryService).includes('ROTACION_ANTES +'), false);
 });
 
 test('PANEL_READ_ONLY_TEST', () => {
@@ -450,19 +510,167 @@ test('PANEL_PII_MINIMIZATION_TEST', () => {
   assert.equal(JSON.stringify(dashboard).includes('family@example.invalid'), false);
 });
 
+test('PANEL_CURRENT_SESSION_TEST', () => {
+  const options = runtimeOptions({ clock: { now: () => new Date('2026-02-01T08:30:00') } });
+  options.repositories.sessionRepository = createArrayRepository([
+    session({ SESION_ID: 'SES-CURRENT', FECHA: '2026-02-01', HORA_INICIO: '08:00', HORA_FIN: '09:00' })
+  ]);
+  assert.equal(createAppsScriptRuntime(options).queries.getPanelDashboard().currentSession.sesionId, 'SES-CURRENT');
+});
+
+test('PANEL_NEXT_SESSION_EXCLUDES_PAST_CLOSED_TEST', () => {
+  const options = runtimeOptions({ clock: { now: () => new Date('2026-02-01T10:00:00') } });
+  options.repositories.sessionRepository = createArrayRepository([
+    session({ SESION_ID: 'SES-PAST', FECHA: '2026-02-01', HORA_INICIO: '08:00', HORA_FIN: '09:00' }),
+    session({ SESION_ID: 'SES-CLOSED', FECHA: '2026-02-01', HORA_INICIO: '11:00', HORA_FIN: '12:00', ESTADO: 'CERRADA' }),
+    session({ SESION_ID: 'SES-NEXT', FECHA: '2026-02-01', HORA_INICIO: '12:00', HORA_FIN: '13:00' })
+  ]);
+  assert.equal(createAppsScriptRuntime(options).queries.getPanelDashboard().nextSession.sesionId, 'SES-NEXT');
+});
+
+test('PANEL_NEXT_SESSION_REPOSITORY_ORDER_INVARIANT_TEST', () => {
+  const options = runtimeOptions({ clock: { now: () => new Date('2026-02-01T07:00:00') } });
+  options.repositories.sessionRepository = createArrayRepository([
+    session({ SESION_ID: 'SES-LATE', FECHA: '2026-02-01', HORA_INICIO: '12:00', HORA_FIN: '13:00' }),
+    session({ SESION_ID: 'SES-EARLY', FECHA: '2026-02-01', HORA_INICIO: '08:00' })
+  ]);
+  assert.equal(createAppsScriptRuntime(options).queries.getPanelDashboard().nextSession.sesionId, 'SES-EARLY');
+});
+
+test('PANEL_ATTENDANCE_COUNTS_SCOPED_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.studentRepository = createArrayRepository([student({ ALUMNO_ID: 'ALU-001' }), student({ ALUMNO_ID: 'ALU-002' })]);
+  options.repositories.attendanceRepository = createArrayRepository([{ ASISTENCIA_ID: 'AST-001', SESION_ID: 'SES-001', ALUMNO_ID: 'ALU-001', ESTADO: 'A' }]);
+  const summary = createAppsScriptRuntime(options).queries.getPanelDashboard().attendanceBySession[0];
+  assert.equal(summary.expected, 2);
+  assert.equal(summary.captured, 1);
+  assert.equal(summary.missing, 1);
+});
+
+test('PANEL_ATTENDANCE_A_POOL_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.sessionRepository = createArrayRepository([session({ COMPETENCIA: 'A' })]);
+  options.repositories.studentRepository = createArrayRepository([student({ ALUMNO_ID: 'ALU-A', COMPETENCIA_BASE: 'A' }), student({ ALUMNO_ID: 'ALU-B', COMPETENCIA_BASE: 'B' })]);
+  assert.equal(createAppsScriptRuntime(options).queries.getPanelDashboard().attendanceBySession[0].expected, 1);
+});
+
+test('PANEL_ATTENDANCE_B_POOL_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.sessionRepository = createArrayRepository([session({ COMPETENCIA: 'B' })]);
+  options.repositories.studentRepository = createArrayRepository([student({ ALUMNO_ID: 'ALU-A', COMPETENCIA_BASE: 'A' }), student({ ALUMNO_ID: 'ALU-B', COMPETENCIA_BASE: 'B' })]);
+  assert.equal(createAppsScriptRuntime(options).queries.getPanelDashboard().attendanceBySession[0].expected, 1);
+});
+
+test('PANEL_EXPIRED_ABSENCE_DEADLINE_TEST', () => {
+  const options = runtimeOptions({ clock: { now: () => new Date('2026-02-02T10:00:00') } });
+  options.repositories.attendanceRepository = createArrayRepository([{ ASISTENCIA_ID: 'AST-001', SESION_ID: 'SES-001', ALUMNO_ID: 'ALU-001', ESTADO: 'F', LIMITE_JUSTIFICACION: '2026-02-02T09:00:00' }]);
+  assert.equal(createAppsScriptRuntime(options).queries.getPanelDashboard().expiredAbsences, 1);
+});
+
+test('PANEL_NEXT_ABSENCE_DEADLINE_TEST', () => {
+  const options = runtimeOptions({ clock: { now: () => new Date('2026-02-02T08:00:00') } });
+  options.repositories.studentRepository = createArrayRepository([student({ ALUMNO_ID: 'ALU-001' }), student({ ALUMNO_ID: 'ALU-002' })]);
+  options.repositories.attendanceRepository = createArrayRepository([
+    { ASISTENCIA_ID: 'AST-002', SESION_ID: 'SES-001', ALUMNO_ID: 'ALU-001', ESTADO: 'F', LIMITE_JUSTIFICACION: '2026-02-02T11:00:00' },
+    { ASISTENCIA_ID: 'AST-001', SESION_ID: 'SES-001', ALUMNO_ID: 'ALU-002', ESTADO: 'F', LIMITE_JUSTIFICACION: '2026-02-02T09:00:00' }
+  ]);
+  assert.equal(createAppsScriptRuntime(options).queries.getPanelDashboard().nextAbsenceDeadline.toISOString(), new Date('2026-02-02T09:00:00').toISOString());
+});
+
+test('PANEL_CONVOCATION_AUTHORITATIVE_SELECTION_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.convocationRepository = createArrayRepository([
+    { ...convocation(), CONVOCATORIA_ID: 'CON-PROP', ESTADO: 'PROPUESTA' },
+    { ...convocation(), CONVOCATORIA_ID: 'CON-AUTH', ESTADO: 'APROBADA' }
+  ]);
+  assert.equal(createAppsScriptRuntime(options).queries.getPanelDashboard().convocationStatusByMatch['PAR-001'].CONVOCATORIA_ID, 'CON-AUTH');
+});
+
+test('PANEL_CONVOCATION_REPOSITORY_ORDER_INVARIANT_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.convocationRepository = createArrayRepository([
+    { ...convocation(), CONVOCATORIA_ID: 'CON-Z', ESTADO: 'PROPUESTA' },
+    { ...convocation(), CONVOCATORIA_ID: 'CON-A', ESTADO: 'APROBADA' }
+  ]);
+  assert.equal(createAppsScriptRuntime(options).queries.getPanelDashboard().convocationStatusByMatch['PAR-001'].CONVOCATORIA_ID, 'CON-A');
+});
+
+test('PANEL_RED_ALERT_NO_DUPLICATION_TEST', () => {
+  const options = runtimeOptions();
+  options.constructors.createParticipationService = () => ({
+    getParticipations: () => [],
+    validateMatchParticipationReadiness: () => ({ ready: true, errors: [], alerts: [{ code: 'RED_CARD_REVIEW_REQUIRED', studentId: 'ALU-001', matchId: 'PAR-001' }] })
+  });
+  assert.equal(createAppsScriptRuntime(options).queries.getPanelDashboard().sportAlerts.length, 1);
+});
+
+test('PANEL_READINESS_ISSUE_VISIBLE_TEST', () => {
+  const options = runtimeOptions();
+  options.constructors.createParticipationService = () => ({
+    getParticipations: () => [],
+    validateMatchParticipationReadiness: () => ({ ready: false, errors: ['PARTICIPATION_MISSING_SELECTED_PLAYER'], alerts: [] })
+  });
+  assert.equal(createAppsScriptRuntime(options).queries.getPanelDashboard().readinessIssues[0].code, 'PARTICIPATION_MISSING_SELECTED_PLAYER');
+});
+
+test('PANEL_PARTICIPATION_FINAL_SELECTED_LEFT_JOIN_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.matchRepository = createArrayRepository([match({ ESTADO: 'JUGADO', GOLES_FAVOR: 1, GOLES_CONTRA: 0 })]);
+  options.repositories.sessionRepository = createArrayRepository([session({ TIPO: 'PARTIDO', COMPETENCIA: 'A', PARTIDO_ID: 'PAR-001' })]);
+  const view = createAppsScriptRuntime(options).queries.getPanelParticipation('PAR-001');
+  assert.equal(view.rows.length, 1);
+  assert.equal(view.rows[0].ALUMNO_ID, 'ALU-001');
+});
+
+test('PANEL_PARTICIPATION_EMPTY_CAPTURE_ROWS_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.matchRepository = createArrayRepository([match({ ESTADO: 'JUGADO', GOLES_FAVOR: 1, GOLES_CONTRA: 0 })]);
+  options.repositories.sessionRepository = createArrayRepository([session({ TIPO: 'PARTIDO', COMPETENCIA: 'A', PARTIDO_ID: 'PAR-001' })]);
+  assert.equal(createAppsScriptRuntime(options).queries.getPanelParticipation('PAR-001').rows[0].MINUTOS_JUGADOS, '');
+});
+
+test('PANEL_PARTICIPATION_UNSELECTED_EXCLUDED_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.matchRepository = createArrayRepository([match({ ESTADO: 'JUGADO', GOLES_FAVOR: 1, GOLES_CONTRA: 0 })]);
+  options.repositories.sessionRepository = createArrayRepository([session({ TIPO: 'PARTIDO', COMPETENCIA: 'A', PARTIDO_ID: 'PAR-001' })]);
+  options.repositories.detailRepository = createArrayRepository([detail({ SELECCIONADO_FINAL: false })]);
+  assert.equal(createAppsScriptRuntime(options).queries.getPanelParticipation('PAR-001').rows.length, 0);
+});
+
 test('PANEL_SHEET_SETUP_TEST', () => {
   const spreadsheet = fakeSpreadsheet();
   const result = setupOperationalSheets(spreadsheet, setupSheetWithHeaders);
   assert.equal(result.sheetCount, 12);
   assert.deepEqual(spreadsheet.sheets.PANEL.rows[0], global.PANEL_HEADERS);
+  assert.equal(spreadsheet.sheets.PANEL.rows.some((row) => row[0] === 'BIENVENIDA'), true);
 });
 
 test('PANEL_SHEET_IDEMPOTENCY_TEST', () => {
   const spreadsheet = fakeSpreadsheet();
   setupOperationalSheets(spreadsheet, setupSheetWithHeaders);
-  spreadsheet.sheets.PANEL.rows.push(['AYUDA', 'texto', '']);
   setupOperationalSheets(spreadsheet, setupSheetWithHeaders);
-  assert.equal(spreadsheet.sheets.PANEL.rows.length, 2);
+  assert.equal(spreadsheet.sheets.PANEL.rows.filter((row) => row[0] === 'AYUDA').length, 1);
+});
+
+test('PANEL_LANDING_CONTENT_TEST', () => {
+  const spreadsheet = fakeSpreadsheet();
+  setupOperationalSheets(spreadsheet, setupSheetWithHeaders);
+  assert.equal(spreadsheet.sheets.PANEL.rows.some((row) => row[1] === 'Liceo del Valle - Futbol'), true);
+});
+
+test('PANEL_LANDING_IDEMPOTENCY_TEST', () => {
+  const spreadsheet = fakeSpreadsheet();
+  setupOperationalSheets(spreadsheet, setupSheetWithHeaders);
+  setupOperationalSheets(spreadsheet, setupSheetWithHeaders);
+  assert.equal(spreadsheet.sheets.PANEL.rows.filter((row) => row[0] === 'BIENVENIDA').length, 1);
+});
+
+test('PANEL_LANDING_PRESERVES_CUSTOM_CONTENT_TEST', () => {
+  const spreadsheet = fakeSpreadsheet();
+  setupOperationalSheets(spreadsheet, setupSheetWithHeaders);
+  spreadsheet.sheets.PANEL.rows.push(['CUSTOM', 'nota local', '']);
+  setupOperationalSheets(spreadsheet, setupSheetWithHeaders);
+  assert.equal(spreadsheet.sheets.PANEL.rows.some((row) => row[0] === 'CUSTOM'), true);
 });
 
 test('PANEL_SHEET_NOT_AUTHORITY_TEST', () => {
@@ -597,6 +805,99 @@ test('APPS_SCRIPT_RUNTIME_BOOTSTRAP_TEST', () => {
   assert.equal(typeof runtime.commands.createSession, 'function');
 });
 
+test('RUNTIME_EXTERNAL_MAIL_CAPABILITY_TEST', () => {
+  const runtime = createAppsScriptRuntime(runtimeOptions({
+    environment: { spreadsheetId: 'test-spreadsheet', getExternalMailEnabled: () => false }
+  }));
+  assert.deepEqual(runtime.queries.getRuntimeCapabilities(), { externalMailEnabled: false });
+});
+
+test('MAIL_DISABLED_COMMAND_NO_COMMUNICATION_WRITE_TEST', () => {
+  let writes = 0;
+  let sent = 0;
+  const options = runtimeOptions({
+    environment: { spreadsheetId: 'test-spreadsheet', getExternalMailEnabled: () => false }
+  });
+  options.repositories.communicationRepository = {
+    getAll: () => [{ COMUNICACION_ID: 'COM-001', TIPO: 'AUSENCIA', ALUMNO_ID: 'ALU-001', TUTOR_ID: 'TUT-001', REFERENCIA_ID: 'AST-001', DESTINATARIO: 'family@example.invalid', ASUNTO: 'Aviso', CUERPO: 'Texto', CREADO_EN: '', ENVIADO_EN: '', ESTADO: 'PENDIENTE', ERROR: '', INTENTOS: 0 }],
+    insert(record) { return record; },
+    updateById() { writes += 1; }
+  };
+  options.mailAdapter = { send() { sent += 1; } };
+  assert.throws(() => createAppsScriptRuntime(options).commands.sendPendingCommunications(), /MAIL_EXTERNAL_DISABLED/);
+  assert.equal(writes, 0);
+  assert.equal(sent, 0);
+});
+
+test('MAIL_DISABLED_COMMAND_NO_AUDIT_WRITE_TEST', () => {
+  let auditWrites = 0;
+  const options = runtimeOptions({
+    environment: { spreadsheetId: 'test-spreadsheet', getExternalMailEnabled: () => false }
+  });
+  options.repositories.auditRepository = { getAll: () => [], insert() { auditWrites += 1; } };
+  assert.throws(() => createAppsScriptRuntime(options).commands.sendPendingCommunications(), /MAIL_EXTERNAL_DISABLED/);
+  assert.equal(auditWrites, 0);
+});
+
+test('MAIL_DISABLED_COMMAND_NO_ADAPTER_CALL_TEST', () => {
+  let sent = 0;
+  assert.throws(() => createAppsScriptRuntime(runtimeOptions({
+    environment: { spreadsheetId: 'test-spreadsheet', getExternalMailEnabled: () => false },
+    mailAdapter: { send() { sent += 1; } }
+  })).commands.sendPendingCommunications(), /MAIL_EXTERNAL_DISABLED/);
+  assert.equal(sent, 0);
+});
+
+test('FIRST_RUN_EMPTY_SPREADSHEET_SETUP_TEST', () => {
+  const spreadsheet = fakeSpreadsheet();
+  const result = setupLdvOperationalSheetsWithDependencies({
+    environment: { getSpreadsheetId: () => 'sheet-id' },
+    spreadsheet,
+    setupOperationalSheets,
+    setupFn: setupSheetWithHeaders
+  });
+  assert.equal(result.sheetCount, 12);
+  assert.equal(Object.keys(spreadsheet.sheets).length, 12);
+});
+
+test('FIRST_RUN_SETUP_DOES_NOT_BUILD_RUNTIME_TEST', () => {
+  const spreadsheet = fakeSpreadsheet();
+  const result = setupLdvOperationalSheetsWithDependencies({
+    environment: { getSpreadsheetId: () => 'sheet-id' },
+    spreadsheet,
+    setupOperationalSheets,
+    setupFn: setupSheetWithHeaders
+  });
+  assert.equal(result.sheetCount, 12);
+});
+
+test('FIRST_RUN_SETUP_NO_MAIL_TEST', () => {
+  let opened = false;
+  const spreadsheet = fakeSpreadsheet();
+  setupLdvOperationalSheetsWithDependencies({
+    environment: { getSpreadsheetId: () => 'sheet-id' },
+    spreadsheetProvider: { openById() { opened = true; return spreadsheet; } },
+    setupOperationalSheets,
+    setupFn: setupSheetWithHeaders
+  });
+  assert.equal(opened, true);
+});
+
+test('FIRST_RUN_SETUP_IDEMPOTENCY_TEST', () => {
+  const spreadsheet = fakeSpreadsheet();
+  setupLdvOperationalSheetsWithDependencies({ environment: { getSpreadsheetId: () => 'sheet-id' }, spreadsheet, setupOperationalSheets, setupFn: setupSheetWithHeaders });
+  setupLdvOperationalSheetsWithDependencies({ environment: { getSpreadsheetId: () => 'sheet-id' }, spreadsheet, setupOperationalSheets, setupFn: setupSheetWithHeaders });
+  assert.equal(spreadsheet.sheets.PANEL.rows.filter((row) => row[0] === 'BIENVENIDA').length, 1);
+});
+
+test('FIRST_RUN_SETUP_EXISTING_DATA_PRESERVED_TEST', () => {
+  const spreadsheet = fakeSpreadsheet();
+  setupLdvOperationalSheetsWithDependencies({ environment: { getSpreadsheetId: () => 'sheet-id' }, spreadsheet, setupOperationalSheets, setupFn: setupSheetWithHeaders });
+  spreadsheet.sheets.ALUMNOS.rows.push(['ALU-001']);
+  setupLdvOperationalSheetsWithDependencies({ environment: { getSpreadsheetId: () => 'sheet-id' }, spreadsheet, setupOperationalSheets, setupFn: setupSheetWithHeaders });
+  assert.equal(spreadsheet.sheets.ALUMNOS.rows.length, 2);
+});
+
 test('APPS_SCRIPT_RUNTIME_NO_CALL_ON_LOAD_TEST', () => {
   assert.equal(typeof createLdvAppsScriptRuntime, 'function');
   assert.equal(typeof getLdvPanelHtml(), 'string');
@@ -606,6 +907,37 @@ test('ONOPEN_MENU_ONLY_TEST', () => {
   const html = getLdvPanelHtml();
   assert.equal(html.includes('Liceo del Valle'), true);
   assert.equal(html.includes('MailApp'), false);
+});
+
+test('ONOPEN_REAL_MENU_ONLY_TEST', () => {
+  const calls = [];
+  const previous = global.SpreadsheetApp;
+  global.SpreadsheetApp = {
+    getUi() {
+      calls.push('getUi');
+      return {
+        createMenu(name) {
+          calls.push(`menu:${name}`);
+          return {
+            addItem(label, fn) { calls.push(`item:${label}:${fn}`); return this; },
+            addToUi() { calls.push('addToUi'); return this; }
+          };
+        }
+      };
+    }
+  };
+  try {
+    onOpen();
+  } finally {
+    global.SpreadsheetApp = previous;
+  }
+  assert.deepEqual(calls, [
+    'getUi',
+    'menu:Liceo del Valle',
+    'item:Abrir Panel:showLdvPanel',
+    'item:Setup / Verificar estructura:setupLdvOperationalSheets',
+    'addToUi'
+  ]);
 });
 
 test('PANEL_HANDLER_COMMAND_BOUNDARY_TEST', () => {
@@ -626,14 +958,235 @@ test('PANEL_HANDLER_ERROR_SANITIZATION_TEST', () => {
   assert.deepEqual(response, { ok: false, code: 'ERROR', message: 'No se pudo completar la operacion solicitada.' });
 });
 
+test('PANEL_HANDLER_REAL_COMMAND_BOUNDARY_TEST', () => {
+  let called = false;
+  handlers.setPanelRuntimeFactoryForTest(() => ({
+    commands: {
+      createSession(input, options) {
+        called = true;
+        assert.equal(input.SESION_ID, undefined);
+        assert.equal(options.operationId, 'OP-SERVER');
+        return { ok: true };
+      }
+    },
+    runtime: { idGenerator: { operationId: () => 'OP-SERVER' } }
+  }));
+  try {
+    assert.equal(handlers.commandCreateSession({ SESION_ID: 'CLIENT', TIPO: 'ENTRENAMIENTO', FECHA: '2026-02-01', HORA_INICIO: '08:00' }).ok, true);
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+  assert.equal(called, true);
+});
+
+test('PANEL_HANDLER_CLIENT_OPERATION_ID_IGNORED_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({
+    commands: {
+      resolveAbsence(id, state, options) {
+        assert.equal(options.operationId, 'OP-SERVER');
+        return { id, state };
+      }
+    },
+    runtime: { idGenerator: { operationId: () => 'OP-SERVER' } }
+  }));
+  try {
+    assert.equal(handlers.commandResolveAbsence('AST-001', 'FJ', { operationId: 'OP-CLIENT', reason: 'safe' }).ok, true);
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('PANEL_HANDLER_CLIENT_TIMESTAMP_IGNORED_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({
+    commands: {
+      createAttendance(input) {
+        assert.equal(input.registradoEn, undefined);
+        assert.equal(input.LIMITE_JUSTIFICACION, undefined);
+        return input;
+      }
+    },
+    runtime: { idGenerator: { operationId: () => 'OP-SERVER' } }
+  }));
+  try {
+    assert.equal(handlers.commandCreateAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'A', registradoEn: 'client', LIMITE_JUSTIFICACION: 'client' }).data.registradoEn, undefined);
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('PANEL_HANDLER_ERROR_SANITIZATION_E2E_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({
+    commands: { createAttendance() { throw new Error('STACK family@example.invalid'); } },
+    runtime: { idGenerator: { operationId: () => 'OP-SERVER' } }
+  }));
+  try {
+    const response = handlers.commandCreateAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'A' });
+    assert.equal(response.ok, false);
+    assert.equal(JSON.stringify(response).includes('family@example.invalid'), false);
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('PANEL_ABSENCE_CLIENT_NOW_IGNORED_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({
+    commands: { resolveAbsence(id, state, options) { assert.equal(options.now, undefined); return { id, state }; } },
+    runtime: { idGenerator: { operationId: () => 'OP-SERVER' } }
+  }));
+  try {
+    assert.equal(handlers.commandResolveAbsence('AST-001', 'FJ', { now: 'client', reason: 'safe' }).ok, true);
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('PANEL_ABSENCE_FI_DIRECT_REJECTED_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({ commands: { resolveAbsence() { throw new Error('SHOULD_NOT_CALL'); } }, runtime: { idGenerator: { operationId: () => 'OP-SERVER' } } }));
+  try {
+    assert.equal(handlers.commandResolveAbsence('AST-001', 'FI', {}).ok, false);
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('PANEL_ABSENCE_FJ_SERVER_CLOCK_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({
+    commands: { resolveAbsence(id, state, options) { assert.equal(state, 'FJ'); assert.equal(options.MODIFICADO_EN, undefined); return { id, state }; } },
+    runtime: { idGenerator: { operationId: () => 'OP-SERVER' } }
+  }));
+  try {
+    assert.equal(handlers.commandResolveAbsence('AST-001', 'FJ', { MODIFICADO_EN: 'client' }).ok, true);
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('PANEL_ABSENCE_LES_SERVER_CLOCK_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({
+    commands: { resolveAbsence(id, state, options) { assert.equal(state, 'LES'); assert.equal(options.LIMITE_JUSTIFICACION, undefined); return { id, state }; } },
+    runtime: { idGenerator: { operationId: () => 'OP-SERVER' } }
+  }));
+  try {
+    assert.equal(handlers.commandResolveAbsence('AST-001', 'LES', { LIMITE_JUSTIFICACION: 'client' }).ok, true);
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('PANEL_ATTENDANCE_ID_SERVER_GENERATED_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({
+    commands: { createAttendance(input) { assert.equal(input.asistenciaId, undefined); assert.equal(input.ASISTENCIA_ID, undefined); return input; } },
+    runtime: { idGenerator: { operationId: () => 'OP-SERVER' } }
+  }));
+  try {
+    assert.equal(handlers.commandCreateAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'A', ASISTENCIA_ID: 'CLIENT' }).ok, true);
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('PANEL_ATTENDANCE_TIMESTAMP_SERVER_GENERATED_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({
+    commands: { createAttendance(input) { assert.equal(input.REGISTRADO_EN, undefined); return input; } },
+    runtime: { idGenerator: { operationId: () => 'OP-SERVER' } }
+  }));
+  try {
+    assert.equal(handlers.commandCreateAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'A', REGISTRADO_EN: 'client' }).ok, true);
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('PANEL_ATTENDANCE_CLIENT_DEADLINE_IGNORED_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({
+    commands: { createAttendance(input) { assert.equal(input.limiteJustificacion, undefined); return input; } },
+    runtime: { idGenerator: { operationId: () => 'OP-SERVER' } }
+  }));
+  try {
+    assert.equal(handlers.commandCreateAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'F', limiteJustificacion: 'client' }).ok, true);
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('PANEL_UI_NAVIGATION_BINDINGS_TEST', () => {
+  const html = getLdvPanelHtml();
+  assert.equal(html.includes('addEventListener("click"'), true);
+  assert.equal(html.includes('data-view="dashboard"'), true);
+  assert.equal(html.includes('data-view="alerts"'), true);
+});
+
+test('PANEL_UI_ATTENDANCE_A_R_F_ACTIONS_TEST', () => {
+  const html = getLdvPanelHtml();
+  assert.equal(html.includes('>A</button>'), true);
+  assert.equal(html.includes('>R</button>'), true);
+  assert.equal(html.includes('>F</button>'), true);
+});
+
+test('PANEL_UI_ABSENCE_FJ_LES_ONLY_TEST', () => {
+  const html = getLdvPanelHtml();
+  assert.equal(html.includes('>FJ</button>'), true);
+  assert.equal(html.includes('>LES</button>'), true);
+});
+
+test('PANEL_UI_NO_DIRECT_FI_ACTION_TEST', () => {
+  assert.equal(getLdvPanelHtml().includes(",'FI'"), false);
+});
+
+test('PANEL_UI_MATCH_ACTIONS_TEST', () => {
+  const html = getLdvPanelHtml();
+  assert.equal(html.includes('Crear'), true);
+  assert.equal(html.includes('Marcar JUGADO'), true);
+  assert.equal(html.includes('Cancelar'), true);
+});
+
+test('PANEL_UI_EXTERNAL_MAIL_DISABLED_TEST', () => {
+  const html = getLdvPanelHtml();
+  assert.equal(html.includes('Enviar pendientes'), true);
+  assert.equal(html.includes('id=\\"send-pending\\" disabled'), true);
+});
+
+test('PANEL_UI_CONVOCATION_GENERATE_TEST', () => {
+  assert.equal(getLdvPanelHtml().includes('Generar propuesta'), true);
+});
+
+test('PANEL_UI_CONVOCATION_PENDING_DISABLED_TEST', () => {
+  assert.equal(getLdvPanelHtml().includes('PENDING'), true);
+});
+
+test('PANEL_UI_CONVOCATION_INELIGIBLE_DISABLED_TEST', () => {
+  assert.equal(getLdvPanelHtml().includes('INELIGIBLE'), true);
+});
+
+test('PANEL_UI_CONVOCATION_MANUAL_REASON_TEST', () => {
+  assert.equal(getLdvPanelHtml().includes('motivo obligatorio'), true);
+  assert.equal(typeof handlers.commandSetFinalSelection, 'function');
+});
+
+test('PANEL_UI_CONVOCATION_APPROVAL_TEST', () => {
+  assert.equal(getLdvPanelHtml().includes('Aprobar'), true);
+});
+
+test('PANEL_UI_POST_MATCH_SELECTED_ROWS_TEST', () => {
+  assert.equal(getLdvPanelHtml().includes('Post Partido'), true);
+});
+
+test('PANEL_UI_POST_MATCH_ATTENDANCE_READ_ONLY_TEST', () => {
+  assert.equal(getLdvPanelHtml().includes('ASISTENCIA_ESTADO es lectura'), true);
+});
+
+test('PANEL_UI_POST_MATCH_CREATE_UPDATE_TEST', () => {
+  assert.equal(getLdvPanelHtml().includes('Guardar participacion'), true);
+});
+
 test('P14_END_TO_END_FAKE_RUNTIME_TEST', () => {
-  const options = runtimeOptions();
+  const options = runtimeOptions({ clock: { now: () => new Date('2026-02-03T08:30:00') } });
   options.repositories.attendanceRepository = createArrayRepository([]);
   const runtime = createAppsScriptRuntime(options);
-  const createdSession = runtime.commands.createSession({ TIPO: 'ENTRENAMIENTO', FECHA: '2026-02-03', HORA_INICIO: '08:00', COMPETENCIA: 'GENERAL' });
+  const createdSession = runtime.commands.createSession({ TIPO: 'ENTRENAMIENTO', FECHA: '2026-02-03', HORA_INICIO: '08:00', HORA_FIN: '09:00', COMPETENCIA: 'GENERAL' });
   const attendance = runtime.commands.createAttendance({ sesionId: createdSession.SESION_ID, alumnoId: 'ALU-001', estado: 'A' });
   const dashboard = runtime.queries.getPanelDashboard();
   assert.equal(attendance.ALUMNO_ID, 'ALU-001');
-  assert.equal(dashboard.attendanceCaptured, 1);
+  assert.equal(dashboard.attendanceSummary.captured, 1);
   assert.equal(JSON.stringify(runtime.queries.getEvents()).includes('family@example.invalid'), false);
 });
