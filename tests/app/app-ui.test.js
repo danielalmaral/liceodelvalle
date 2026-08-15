@@ -1021,3 +1021,212 @@ test('APP_CONVOCATION_POSITION_COVERAGE_FILTER_INVARIANT_TEST', () => {
   assert.equal(html.includes('MED 2/2'), true);
   assert.equal(html.includes('DEL 0/1'), true);
 });
+
+test('APP_CONVOCATION_SWITCH_EXISTING_INFLIGHT_CLEARS_OLD_STATE_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.programmedMatches.push({ partidoId: 'PAR-002', competencia: 'A', rival: 'Rival Dos' });
+  data.referenceData.convocationProposals.push({ CONVOCATORIA_ID: 'CON-002', PARTIDO_ID: 'PAR-002', ESTADO: 'PROPUESTA', TOTAL_OBJETIVO: 12 });
+  const calls = [];
+  const state = { activeRoute: 'convocations', ...data, selectedProgrammedMatchId: 'PAR-001', selectedConvocationId: 'CON-001', convocation: convocationView() };
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) { calls.push({ name, args, onSuccess }); },
+    state,
+    render: { route() {} }
+  });
+  controller.selectProgrammedMatch('PAR-002');
+  assert.deepEqual(calls[0], { name: 'getPanelConvocation', args: ['CON-002'], onSuccess: calls[0].onSuccess });
+  assert.equal(state.selectedProgrammedMatchId, 'PAR-002');
+  assert.equal(state.selectedConvocationId, '');
+  assert.equal(state.convocation.details.length, 0);
+});
+
+test('APP_CONVOCATION_SWITCH_EXISTING_INFLIGHT_REMOVES_OLD_ACTIONS_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.programmedMatches.push({ partidoId: 'PAR-002', competencia: 'A', rival: 'Rival Dos' });
+  data.referenceData.convocationProposals.push({ CONVOCATORIA_ID: 'CON-002', PARTIDO_ID: 'PAR-002', ESTADO: 'PROPUESTA', TOTAL_OBJETIVO: 12 });
+  const state = { activeRoute: 'convocations', ...data, selectedProgrammedMatchId: 'PAR-001', selectedConvocationId: 'CON-001', convocation: convocationView() };
+  const controller = createAppClientController({
+    callServer() {},
+    state,
+    render: { route() {} }
+  });
+  controller.selectProgrammedMatch('PAR-002');
+  const html = createAppRenderer({ state }).renderConvocations();
+  assert.equal(html.includes('data-convocation-id="CON-001"'), false);
+  assert.equal(html.includes('data-action="convocation-selection"'), false);
+  assert.equal(html.includes('data-action="convocation-position"'), false);
+});
+
+test('APP_CONVOCATION_RENDER_MISMATCH_GUARD_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.programmedMatches.push({ partidoId: 'PAR-002', competencia: 'A', rival: 'Rival Dos' });
+  data.referenceData.convocationProposals.push({ CONVOCATORIA_ID: 'CON-002', PARTIDO_ID: 'PAR-002', ESTADO: 'PROPUESTA', TOTAL_OBJETIVO: 12 });
+  const state = { activeRoute: 'convocations', ...data, selectedProgrammedMatchId: 'PAR-002', selectedConvocationId: 'CON-001', convocation: convocationView({ convocationId: 'CON-001' }) };
+  const html = createAppRenderer({ state }).renderConvocations();
+  assert.equal(html.includes('Alumno Ficticio'), false);
+  assert.equal(html.includes('data-convocation-id="CON-001"'), false);
+  assert.equal(html.includes('data-action="convocation-selection"'), false);
+  assert.equal(html.includes('data-action="communication-prepare" data-convocation-id="CON-001"'), false);
+});
+
+test('APP_CONVOCATION_SWITCH_EXISTING_COMPLETES_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.programmedMatches.push({ partidoId: 'PAR-002', competencia: 'A', rival: 'Rival Dos' });
+  data.referenceData.convocationProposals.push({ CONVOCATORIA_ID: 'CON-002', PARTIDO_ID: 'PAR-002', ESTADO: 'PROPUESTA', TOTAL_OBJETIVO: 12 });
+  const calls = [];
+  const state = { activeRoute: 'convocations', ...data, selectedProgrammedMatchId: 'PAR-001', selectedConvocationId: 'CON-001', convocation: convocationView() };
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) { calls.push({ name, args, onSuccess }); },
+    state,
+    render: { route() {} }
+  });
+  controller.selectProgrammedMatch('PAR-002');
+  calls[0].onSuccess({ ok: true, data: convocationView({ convocationId: 'CON-002', details: [{ ...convocationView().details[0], nombre: 'Jugador Nuevo' }] }) });
+  const html = createAppRenderer({ state }).renderConvocations();
+  assert.equal(state.selectedConvocationId, 'CON-002');
+  assert.equal(state.convocation.details[0].nombre, 'Jugador Nuevo');
+  assert.equal(html.includes('data-convocation-id="CON-002"'), true);
+  assert.equal(html.includes('data-convocation-id="CON-001"'), false);
+});
+
+test('APP_ATTENDANCE_SESSION_SWITCH_INFLIGHT_CLEARS_OLD_ROWS_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.openSessions.push({ sesionId: 'SES-NEW', competencia: 'A', fecha: '2026-02-02' });
+  const calls = [];
+  const state = { activeRoute: 'attendance', ...data, selectedSessionId: 'SES-OLD', attendance: { sessionId: 'SES-OLD', rows: [{ studentId: 'ALU-OLD', nombre: 'Alumno Viejo', capabilities: { canMarkAttendance: true } }] } };
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) { calls.push({ name, args, onSuccess }); },
+    state,
+    render: { route() {} }
+  });
+  controller.selectAttendanceSession('SES-NEW');
+  assert.equal(state.selectedSessionId, 'SES-NEW');
+  assert.equal(state.attendance.sessionId, 'SES-NEW');
+  assert.equal(state.attendance.rows.length, 0);
+});
+
+test('APP_ATTENDANCE_SESSION_SWITCH_OLD_ACTIONS_UNAVAILABLE_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.openSessions.push({ sesionId: 'SES-NEW', competencia: 'A', fecha: '2026-02-02' });
+  const state = { activeRoute: 'attendance', ...data, selectedSessionId: 'SES-OLD', attendance: { sessionId: 'SES-OLD', rows: [{ studentId: 'ALU-OLD', nombre: 'Alumno Viejo', capabilities: { canMarkAttendance: true } }] } };
+  const controller = createAppClientController({
+    callServer() {},
+    state,
+    render: { route() {} }
+  });
+  controller.selectAttendanceSession('SES-NEW');
+  const html = createAppRenderer({ state }).renderAttendance();
+  assert.equal(html.includes('ALU-OLD'), false);
+  assert.equal(html.includes('data-action="mark-attendance"'), false);
+});
+
+test('APP_ATTENDANCE_SESSION_RENDER_MISMATCH_GUARD_TEST', () => {
+  const state = {
+    activeRoute: 'attendance',
+    ...bootstrap(),
+    selectedSessionId: 'SES-NEW',
+    attendance: { sessionId: 'SES-OLD', rows: [{ studentId: 'ALU-OLD', nombre: 'Alumno Viejo', capabilities: { canMarkAttendance: true } }] }
+  };
+  const html = createAppRenderer({ state }).renderAttendance();
+  assert.equal(html.includes('Alumno Viejo'), false);
+  assert.equal(html.includes('data-student-id="ALU-OLD"'), false);
+  assert.equal(html.includes('data-action="mark-attendance"'), false);
+});
+
+test('APP_ATTENDANCE_SESSION_SWITCH_COMPLETES_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.openSessions.push({ sesionId: 'SES-NEW', competencia: 'A', fecha: '2026-02-02' });
+  const calls = [];
+  const state = { activeRoute: 'attendance', ...data, selectedSessionId: 'SES-OLD', attendance: { sessionId: 'SES-OLD', rows: [{ studentId: 'ALU-OLD', nombre: 'Alumno Viejo', capabilities: { canMarkAttendance: true } }] } };
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) { calls.push({ name, args, onSuccess }); },
+    state,
+    render: { route() {}, feedback() {} }
+  });
+  controller.selectAttendanceSession('SES-NEW');
+  calls[0].onSuccess({ ok: true, data: { sessionId: 'SES-NEW', rows: [{ studentId: 'ALU-NEW', nombre: 'Alumno Nuevo', capabilities: { canMarkAttendance: true } }] } });
+  const html = createAppRenderer({ state }).renderAttendance();
+  assert.equal(state.attendance.rows[0].studentId, 'ALU-NEW');
+  assert.equal(html.includes('ALU-NEW'), true);
+  assert.equal(html.includes('ALU-OLD'), false);
+});
+
+test('APP_GENERATE_SUCCESS_AFTER_ROUTE_CHANGE_NO_HIJACK_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.convocationProposals = [];
+  const calls = [];
+  const rendered = [];
+  const state = { activeRoute: 'convocations', ...data, selectedProgrammedMatchId: 'PAR-001' };
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess, onFailure) { calls.push({ name, args, onSuccess, onFailure }); },
+    state,
+    render: { loading() {}, route(route) { rendered.push(route); }, error() {} }
+  });
+  controller.generateConvocation('PAR-001');
+  controller.route('students');
+  calls[0].onSuccess({ ok: true, data: { CONVOCATORIA_ID: 'CON-NEW' } });
+  assert.equal(state.activeRoute, 'students');
+  assert.equal(state.convocationGeneratePending, false);
+  assert.equal(calls.filter((call) => call.name === 'getAppBootstrap').length, 1);
+  assert.equal(rendered.includes('convocations'), true);
+});
+
+test('APP_GENERATE_FAILURE_AFTER_ROUTE_CHANGE_NO_HIJACK_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.convocationProposals = [];
+  const calls = [];
+  const errors = [];
+  const state = { activeRoute: 'convocations', ...data, selectedProgrammedMatchId: 'PAR-001' };
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess, onFailure) { calls.push({ name, args, onSuccess, onFailure }); },
+    state,
+    render: { loading() {}, route() {}, error(message) { errors.push(message); } }
+  });
+  controller.generateConvocation('PAR-001');
+  controller.route('students');
+  calls[0].onFailure({ ok: false, code: 'REQUIRED_FIELD' });
+  assert.equal(state.activeRoute, 'students');
+  assert.equal(state.convocationGeneratePending, false);
+  assert.deepEqual(errors, []);
+});
+
+test('APP_GENERATE_SUCCESS_SAME_CONTEXT_REFRESHES_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.convocationProposals = [];
+  const refreshed = bootstrap();
+  refreshed.referenceData.convocationProposals = [{ CONVOCATORIA_ID: 'CON-NEW', PARTIDO_ID: 'PAR-001', ESTADO: 'PROPUESTA', TOTAL_OBJETIVO: 12 }];
+  const calls = [];
+  const state = { activeRoute: 'convocations', ...data, selectedProgrammedMatchId: 'PAR-001' };
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess) {
+      calls.push({ name, args, onSuccess });
+      if (name === 'getAppBootstrap') onSuccess({ ok: true, data: refreshed });
+      if (name === 'getPanelConvocation') onSuccess({ ok: true, data: convocationView({ convocationId: args[0], details: [{ nombre: 'Generado' }] }) });
+    },
+    state,
+    render: { loading() {}, route() {}, error() {} }
+  });
+  controller.generateConvocation('PAR-001');
+  calls[0].onSuccess({ ok: true, data: { CONVOCATORIA_ID: 'CON-NEW' } });
+  assert.deepEqual(calls.map((call) => call.name), ['commandGenerateConvocation', 'getAppBootstrap', 'getPanelConvocation']);
+  assert.equal(state.convocationGeneratePending, false);
+  assert.equal(state.selectedConvocationId, 'CON-NEW');
+  assert.equal(state.convocation.details[0].nombre, 'Generado');
+});
+
+test('APP_GENERATE_FAILURE_SAME_CONTEXT_VISIBLE_TEST', () => {
+  const data = bootstrap();
+  data.referenceData.convocationProposals = [];
+  const calls = [];
+  const errors = [];
+  const state = { activeRoute: 'convocations', ...data, selectedProgrammedMatchId: 'PAR-001' };
+  const controller = createAppClientController({
+    callServer(name, args, onSuccess, onFailure) { calls.push({ name, args, onSuccess, onFailure }); },
+    state,
+    render: { route() {}, error(message) { errors.push(message); } }
+  });
+  controller.generateConvocation('PAR-001');
+  calls[0].onFailure({ ok: false, code: 'REQUIRED_FIELD' });
+  assert.equal(state.convocationGeneratePending, false);
+  assert.equal(errors[0], 'No se pudo completar la operacion solicitada. [REQUIRED_FIELD]');
+});
