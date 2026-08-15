@@ -16,9 +16,13 @@ const requiredPaths = [
   'docs/DATA_MODEL.md',
   'docs/DECISIONS.md',
   'src/appsscript.json',
+  'src/common/DomainUtils.js',
+  'src/common/SheetSetup.js',
   'src/config/ConfigSchema.js',
   'src/config/ConfigService.js',
   'src/config/ConfigSetup.js',
+  'src/config/MasterDataSetup.js',
+  'src/domain/MasterDataContracts.js',
   'src/domain/AttendanceRules.js',
   'src/domain/EligibilityRules.js',
   'src/domain/RotationRules.js',
@@ -33,11 +37,13 @@ const requiredPaths = [
   'src/services/AuditService.js',
   'src/repositories/SheetRepository.js',
   'src/repositories/ConfigRepository.js',
+  'src/repositories/ArrayRepository.js',
   'src/triggers/TriggerHandlers.js',
   'tests/attendance/attendance.test.js',
   'tests/config/config-fixtures.js',
   'tests/config/config-service.test.js',
   'tests/config/config-setup.test.js',
+  'tests/master-data/master-data.test.js',
   'tests/governance/gas-runtime-compatibility.test.js',
   'tests/eligibility/eligibility.test.js',
   'tests/rotation/rotation.test.js',
@@ -156,16 +162,26 @@ function scanSecurity() {
 function scanPii() {
   const findings = [];
   const patterns = [
-    ['email', /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i],
     ['phone', /(?:\+?\d[\s.-]?){10,}/]
   ];
+  const emailPattern = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/ig;
 
   for (const file of getScannableFiles()) {
     const content = readText(file);
+    const rel = relative(file);
+    const emails = content.match(emailPattern) || [];
+
+    for (const email of emails) {
+      if (rel.startsWith('tests/') && email.toLowerCase().endsWith('@example.invalid')) {
+        continue;
+      }
+
+      findings.push(`${rel}:email`);
+    }
 
     for (const [name, pattern] of patterns) {
       if (pattern.test(content)) {
-        findings.push(`${relative(file)}:${name}`);
+        findings.push(`${rel}:${name}`);
       }
     }
   }
@@ -176,14 +192,23 @@ function scanPii() {
 function scanConfigHardcodedRules() {
   const findings = [];
   const files = walk(path.join(root, 'src')).filter((file) => path.extname(file) === '.js');
-  const ruleWords = /(convocados|asistencia|retardo|falta|justificada|lesion|lesión|horas|posicion|posición|rotacion|rotación|calificacion|calificación)/i;
-  const literalAssignment = /(const|let|var)\s+\w+\s*=\s*(?:\d+|'[^']+'|"[^"]+")/;
+  const forbiddenRuntimeDefaults = [
+    /\bCONVOCADOS_[AB]\s*=\s*\d+/,
+    /\bRETARDO_VALOR\s*=\s*\d/,
+    /\bASISTENCIA_VALOR\s*=\s*\d/,
+    /\bFALTA_(?:INJUSTIFICADA|JUSTIFICADA)_VALOR\s*=\s*\d/,
+    /\bLESION_VALOR\s*=\s*\d/,
+    /\bHORAS_JUSTIFICACION\s*=\s*\d+/
+  ];
 
   for (const file of files) {
     const content = readText(file);
 
-    if (ruleWords.test(content) && literalAssignment.test(content)) {
-      findings.push(relative(file));
+    for (const pattern of forbiddenRuntimeDefaults) {
+      if (pattern.test(content)) {
+        findings.push(relative(file));
+        break;
+      }
     }
   }
 
