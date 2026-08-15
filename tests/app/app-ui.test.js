@@ -1784,6 +1784,45 @@ test('APP_MATCH_UPDATE_PROTECTED_FIELDS_NOT_EXPOSED_TEST', () => {
   ['name="PARTIDO_ID"', 'name="ESTADO"', 'name="GOLES_FAVOR"', 'name="GOLES_CONTRA"'].forEach((term) => assert.equal(html.includes(term), false));
 });
 
+test('APP_MATCH_EDIT_FORM_PREFILLED_TEST', () => {
+  const html = createAppRenderer({ state: appUiState('matches', { editingMatchId: 'PAR-001' }) }).renderMatches();
+  ['data-form="match-edit"', 'value="J1"', 'value="Rival Ficticio"', 'value="2026-02-01"', 'value="09:00"', 'value="10:00"', 'value="Cancha"', 'value="60"', 'value="Azul"', 'value="Llegar puntual"', 'Guardar cambios'].forEach((term) => assert.equal(html.includes(term), true));
+});
+
+test('APP_MATCH_EDIT_CREATE_FORM_ISOLATION_TEST', () => {
+  const html = createAppRenderer({ state: appUiState('matches', { editingMatchId: 'PAR-001' }) }).renderMatches();
+  assert.equal(html.includes('data-form="match-create"'), true);
+  assert.equal(html.includes('data-form="match-edit"'), true);
+  assert.equal(srcFile('AppRenderer.js').includes('formPayload(target, \'[data-form="match-create"]\')'), true);
+  assert.equal(srcFile('AppRenderer.js').includes('formPayload(target, \'[data-form="match-edit"][data-match-id="\''), true);
+});
+
+test('APP_MATCH_EDIT_REAL_EVENT_PAYLOAD_TEST', () => {
+  const source = srcFile('AppRenderer.js');
+  assert.equal(source.includes("action === 'match-edit-start'"), true);
+  assert.equal(source.includes("action === 'match-update'"), true);
+  assert.equal(source.includes('data-form="match-edit"'), true);
+});
+
+test('APP_MATCH_EDIT_PROTECTED_FIELDS_TEST', () => {
+  const html = createAppRenderer({ state: appUiState('matches', { editingMatchId: 'PAR-001' }) }).renderMatches();
+  ['name="PARTIDO_ID"', 'name="ESTADO"', 'name="GOLES_FAVOR"', 'name="GOLES_CONTRA"'].forEach((term) => assert.equal(html.includes(term), false));
+});
+
+test('APP_MATCH_EDIT_NON_PROGRAMMED_UNAVAILABLE_TEST', () => {
+  const html = createAppRenderer({ state: appUiState('matches', { editingMatchId: 'PAR-002', matchFilters: { status: 'JUGADO' } }) }).renderMatches();
+  assert.equal(html.includes('data-form="match-edit"'), false);
+  assert.equal(html.includes('Solo lectura'), true);
+});
+
+test('APP_MATCH_NEXT_MATCH_CHRONOLOGY_TEST', () => {
+  const html = createAppRenderer({ state: appUiState('matches', { matches: [
+    matchRow({ partidoId: 'PAR-LATE', rival: 'Rival Tarde', fecha: '2026-03-01', horaPartido: '10:00' }),
+    matchRow({ partidoId: 'PAR-EARLY', rival: 'Rival Temprano', fecha: '2026-01-01', horaPartido: '10:00' })
+  ] }) }).renderMatches();
+  assert.match(html, /Proximo partido A[\s\S]*Rival Temprano/);
+});
+
 test('APP_MATCH_MARK_PLAYED_RPC_TEST', () => {
   const calls = [];
   createAppClientController({ callServer(name, args, onSuccess) { calls.push({ name, args }); onSuccess({ ok: true, data: {} }); }, state: { activeRoute: 'matches', ...bootstrap() }, render: {} }).markMatchPlayed('PAR-001', { golesFavor: 1, golesContra: 0 });
@@ -1850,7 +1889,7 @@ test('APP_MATCH_STALE_READ_FAILURE_IGNORED_TEST', () => {
 test('APP_POSTMATCH_ROUTE_AUTO_HYDRATE_TEST', () => {
   const calls = [];
   createAppClientController({ callServer(name, args, onSuccess) { calls.push({ name, args }); if (name === 'getAppBootstrap') onSuccess({ ok: true, data: bootstrap({ referenceData: { ...bootstrap().referenceData, playedMatches: [matchRow({ partidoId: 'PAR-PLAYED', estado: 'JUGADO' })] } }) }); if (name === 'getPanelParticipation') onSuccess({ ok: true, data: postMatchView() }); }, state: {}, render: { loading() {}, route() {} } }).route('postmatch');
-  assert.deepEqual(calls.map((call) => call.name), ['getAppBootstrap', 'getPanelParticipation']);
+  assert.deepEqual(calls.map((call) => call.name), ['getAppBootstrap', 'getAppConfiguration', 'getPanelParticipation']);
 });
 
 test('APP_POSTMATCH_ROUTE_EMPTY_TEST', () => {
@@ -1896,6 +1935,47 @@ test('APP_POSTMATCH_STALE_FAILURE_IGNORED_TEST', () => {
   assert.deepEqual(errors, []);
 });
 
+test('APP_POSTMATCH_ROUTE_LOADS_RATING_CONFIG_TEST', () => {
+  const calls = [];
+  const state = {};
+  createAppClientController({ callServer(name, args, onSuccess) {
+    calls.push({ name, args });
+    if (name === 'getAppBootstrap') onSuccess({ ok: true, data: bootstrap({ referenceData: { ...bootstrap().referenceData, playedMatches: [matchRow({ partidoId: 'PAR-PLAYED', estado: 'JUGADO' })] } }) });
+    if (name === 'getAppConfiguration') onSuccess({ ok: true, data: configurationModel({ entries: [{ group: 'RENDIMIENTO', key: 'ESCALA_CALIFICACION_MIN', value: 3 }] }) });
+    if (name === 'getPanelParticipation') onSuccess({ ok: true, data: postMatchView() });
+  }, state, render: { loading() {}, route() {} } }).route('postmatch');
+  assert.equal(state.configuration.entries[0].value, 3);
+  assert.deepEqual(calls.map((call) => call.name), ['getAppBootstrap', 'getAppConfiguration', 'getPanelParticipation']);
+});
+
+test('APP_POSTMATCH_RATING_CONFIG_NO_PRESEEDED_STATE_TEST', () => {
+  const calls = [];
+  createAppClientController({ callServer(name, args, onSuccess) { calls.push(name); if (name === 'getAppBootstrap') onSuccess({ ok: true, data: bootstrap({ referenceData: { ...bootstrap().referenceData, playedMatches: [matchRow({ partidoId: 'PAR-PLAYED', estado: 'JUGADO' })] } }) }); }, state: {}, render: { loading() {}, route() {} } }).route('postmatch');
+  assert.equal(calls.includes('getAppConfiguration'), true);
+});
+
+test('APP_POSTMATCH_CONFIG_STALE_SUCCESS_IGNORED_TEST', () => {
+  const calls = [];
+  const data = bootstrap({ referenceData: { ...bootstrap().referenceData, playedMatches: [matchRow({ partidoId: 'PAR-1', estado: 'JUGADO' }), matchRow({ partidoId: 'PAR-2', estado: 'JUGADO' })] } });
+  const state = { activeRoute: 'postmatch', ...data };
+  const controller = createAppClientController({ callServer(name, args, onSuccess) { calls.push({ name, args, onSuccess }); }, state, render: { route() {} } });
+  controller.selectPlayedMatch('PAR-1');
+  controller.selectPlayedMatch('PAR-2');
+  calls.filter((call) => call.name === 'getAppConfiguration')[0].onSuccess({ ok: true, data: configurationModel({ entries: [{ key: 'STALE', value: true }] }) });
+  assert.equal(JSON.stringify(state.configuration || {}).includes('STALE'), false);
+});
+
+test('APP_POSTMATCH_CONFIG_STALE_FAILURE_IGNORED_TEST', () => {
+  const calls = [];
+  const errors = [];
+  const data = bootstrap({ referenceData: { ...bootstrap().referenceData, playedMatches: [matchRow({ partidoId: 'PAR-1', estado: 'JUGADO' }), matchRow({ partidoId: 'PAR-2', estado: 'JUGADO' })] } });
+  const controller = createAppClientController({ callServer(name, args, onSuccess, onFailure) { calls.push({ name, onFailure }); }, state: { activeRoute: 'postmatch', ...data }, render: { route() {}, error(message) { errors.push(message); } } });
+  controller.selectPlayedMatch('PAR-1');
+  controller.selectPlayedMatch('PAR-2');
+  calls.filter((call) => call.name === 'getAppConfiguration')[0].onFailure({ ok: false, code: 'REQUIRED_FIELD' });
+  assert.deepEqual(errors, []);
+});
+
 test('APP_POSTMATCH_NO_RAW_JSON_TEST', () => {
   const html = createAppRenderer({ state: appUiState('postmatch', { postMatch: postMatchView({ issues: [{ code: 'PANEL_POSTMATCH_ATTENDANCE_REQUIRED', detail: { raw: true } }] }) }) }).renderPostMatch();
   assert.equal(html.includes('[object Object]'), false);
@@ -1926,7 +2006,34 @@ test('APP_POSTMATCH_MISSING_ATTENDANCE_BLOCK_TEST', () => {
 
 test('APP_POSTMATCH_ABSENT_FIELDS_LOCKED_TEST', () => {
   const html = createAppRenderer({ state: appUiState('postmatch', { postMatch: postMatchView({ rows: [{ ...postMatchView().rows[0], ASISTENCIA_ESTADO: 'F', ASISTIO_DERIVADO: false }] }) }) }).renderPostMatch();
-  assert.match(html, /data-participation-field="MINUTOS_JUGADOS"[^>]*value="0"[^>]*disabled/);
+  assert.match(html, /data-participation-field="MINUTOS_JUGADOS"[^>]*value=""[^>]*disabled/);
+});
+
+test('APP_POSTMATCH_EXISTING_OBSERVATION_RENDER_TEST', () => {
+  const html = createAppRenderer({ state: appUiState('postmatch', { postMatch: postMatchView({ rows: [{ ...postMatchView().rows[0], OBSERVACIONES: 'Nota previa' }] }) }) }).renderPostMatch();
+  assert.equal(html.includes('value="Nota previa"'), true);
+});
+
+test('APP_POSTMATCH_EXISTING_OBSERVATION_PRESERVED_ON_SAVE_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({ queries: { getPanelParticipation: () => postMatchView({ rows: [{ ...postMatchView().rows[0], OBSERVACIONES: undefined }] }), getParticipations: () => [{ PARTIDO_ID: 'PAR-PLAYED', ALUMNO_ID: 'ALU-001', OBSERVACIONES: 'E2E P15' }] } }));
+  try {
+    assert.equal(handlers.getPanelParticipation('PAR-PLAYED').data.rows[0].OBSERVACIONES, 'E2E P15');
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('APP_POSTMATCH_EMPTY_NUMBER_INPUTS_TEST', () => {
+  const row = { ...postMatchView().rows[0], MINUTOS_JUGADOS: '', GOLES: '', AMARILLAS: '', ROJAS: '', CALIFICACION: '' };
+  const html = createAppRenderer({ state: appUiState('postmatch', { postMatch: postMatchView({ rows: [row] }) }) }).renderPostMatch();
+  ['MINUTOS_JUGADOS', 'GOLES', 'AMARILLAS', 'ROJAS', 'CALIFICACION'].forEach((field) => assert.match(html, new RegExp(`data-participation-field="${field}"[^>]*value=""`)));
+  assert.equal(html.includes('value="-"'), false);
+});
+
+test('APP_POSTMATCH_MISSING_ATTENDANCE_NOT_FALSE_TEST', () => {
+  const html = createAppRenderer({ state: appUiState('postmatch', { postMatch: postMatchView({ rows: [{ ...postMatchView().rows[0], ASISTENCIA_ESTADO: '', ASISTIO_DERIVADO: undefined }] }) }) }).renderPostMatch();
+  assert.match(html, /<td>-<\/td>/);
+  assert.equal(html.includes('<td>No</td>'), false);
 });
 
 test('APP_POSTMATCH_CONDITION_ENUM_TEST', () => {
@@ -1945,6 +2052,22 @@ test('APP_POSTMATCH_DYNAMIC_RATING_CONFIG_TEST', () => {
   assert.equal(html.includes('min="2"'), true);
   assert.equal(html.includes('max="7"'), true);
   assert.equal(html.includes('step="0.1"'), true);
+});
+
+test('APP_POSTMATCH_READINESS_OBJECT_ALERT_TEST', () => {
+  const html = createAppRenderer({ state: appUiState('postmatch', { postMatch: postMatchView({ readiness: { ready: false, errors: [], alerts: [{ code: 'LOW_PARTICIPATION', studentId: 'ALU-001', matchId: 'PAR-PLAYED' }] } }) }) }).renderPostMatch();
+  assert.equal(html.includes('LOW_PARTICIPATION'), true);
+  assert.equal(html.includes('[object Object]'), false);
+});
+
+test('APP_POSTMATCH_LOW_PARTICIPATION_OBJECT_ALERT_TEST', () => {
+  const html = createAppRenderer({ state: appUiState('postmatch', { postMatch: postMatchView({ readiness: { ready: false, errors: [], alerts: [{ code: 'LOW_PARTICIPATION_STREAK' }] } }) }) }).renderPostMatch();
+  assert.equal(html.includes('LOW_PARTICIPATION_STREAK'), true);
+});
+
+test('APP_POSTMATCH_READINESS_ALERT_COUNT_TEST', () => {
+  const html = createAppRenderer({ state: appUiState('postmatch', { postMatch: postMatchView({ issues: [{ code: 'ISSUE' }], readiness: { errors: ['ERR'], alerts: [{ code: 'ALERT' }] } }) }) }).renderPostMatch();
+  assert.equal(html.includes('0 / alertas 3'), true);
 });
 
 test('APP_POSTMATCH_SAVE_REAL_RPC_TEST', () => {
@@ -2005,6 +2128,29 @@ test('APP_REPORTS_FILTER_LEVEL_TEST', () => assert.equal(createAppRenderer({ sta
 test('APP_REPORTS_FILTER_POSITION_TEST', () => assert.equal(createAppRenderer({ state: appUiState('reports', { reportFilters: { position: 'PO' } }) }).renderReports().includes('Sin datos de reporte'), true));
 test('APP_REPORTS_GLOBAL_COMPETITION_FILTER_TEST', () => assert.equal(createAppRenderer({ state: appUiState('reports', { selectedCompetition: 'B' }) }).renderReports().includes('Alumno Ficticio'), false));
 test('APP_REPORTS_ALERTS_CANONICAL_TEST', () => assert.equal(createAppRenderer({ state: appUiState('reports') }).renderReports().includes('ALERTA_CANONICA'), true));
+test('APP_REPORTS_LOCAL_COMPETITION_FILTER_TEST', () => assert.equal(createAppRenderer({ state: appUiState('reports', { reportFilters: { competition: 'B' } }) }).renderReports().includes('Alumno Ficticio'), false));
+test('APP_REPORTS_LOCAL_FILTER_RESPECTS_GLOBAL_TEST', () => assert.equal(createAppRenderer({ state: appUiState('reports', { selectedCompetition: 'A', reportFilters: { competition: 'B' } }) }).renderReports().includes('Alumno Ficticio'), false));
+test('APP_REPORTS_ALERTS_GLOBAL_COMPETITION_FILTER_TEST', () => {
+  const html = createAppRenderer({ state: appUiState('reports', { selectedCompetition: 'B', reports: reportsModel({ alerts: { sportAlerts: [{ code: 'A_ALERT', competencia: 'A' }, { code: 'B_ALERT', competencia: 'B' }], readinessIssues: [] } }) }) }).renderReports();
+  assert.equal(html.includes('A_ALERT'), false);
+  assert.equal(html.includes('B_ALERT'), true);
+});
+test('APP_REPORTS_ALERT_COMPETITION_DERIVATION_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({ queries: {
+    getStudents: () => [student({ alumnoId: 'ALU-001', competenciaBase: 'A', active: true })],
+    getParticipations: () => [],
+    getStudentMetrics: () => ({ finalizedSessions: 0, pendingAbsences: 0, attendanceCount: 0, lateCount: 0, justifiedAbsenceCount: 0, unjustifiedAbsenceCount: 0, injuryCount: 0, compliancePercentage: null, physicalPresencePercentage: null, status: 'NO_DATA' }),
+    getMatches: () => [matchRow({ partidoId: 'PAR-B', competencia: 'B', estado: 'JUGADO', golesFavor: 1, golesContra: 0 })],
+    getPanelDashboard: () => ({ sportAlerts: [{ code: 'MATCH_ALERT', matchId: 'PAR-B' }], readinessIssues: [{ code: 'STUDENT_ALERT', studentId: 'ALU-001' }] })
+  } }));
+  try {
+    const alerts = handlers.getAppReports().data.alerts;
+    assert.equal(alerts.sportAlerts[0].competencia, 'B');
+    assert.equal(alerts.readinessIssues[0].competencia, 'A');
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
 test('APP_REPORTS_EMPTY_STATE_TEST', () => assert.equal(createAppRenderer({ state: appUiState('reports', { reports: reportsModel({ players: [] }) }) }).renderReports().includes('Sin datos de reporte'), true));
 test('APP_REPORTS_NO_PII_TEST', () => ['Tutor', 'example.invalid', 'telefono'].forEach((term) => assert.equal(createAppRenderer({ state: appUiState('reports') }).renderReports().includes(term), false)));
 test('APP_REPORTS_NO_INVENTED_THRESHOLDS_TEST', () => assert.equal(fs.readFileSync(path.join(root, 'src/AppRenderer.js'), 'utf8').includes('threshold'), false));
@@ -2021,6 +2167,21 @@ test('APP_COMMUNICATIONS_SAFE_PAYLOAD_TEST', () => {
     const text = JSON.stringify(handlers.getAppCommunications().data);
     ['DESTINATARIO', 'TUTOR_ID', 'ASUNTO', 'CUERPO', 'example.invalid', 'smtp real'].forEach((term) => assert.equal(text.includes(term), false));
     assert.equal(text.includes('SEND_ERROR'), true);
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('APP_COMMUNICATIONS_CONVOCATION_COMPETITION_CANONICAL_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({ queries: {
+    getRuntimeCapabilities: () => ({ externalMailEnabled: false }),
+    getStudents: () => [student({ alumnoId: 'ALU-001', competenciaBase: 'A' })],
+    getMatches: () => [matchRow({ partidoId: 'PAR-B', competencia: 'B' })],
+    getPanelReferenceData: () => ({ convocationProposals: [{ CONVOCATORIA_ID: 'CON-B', PARTIDO_ID: 'PAR-B' }], authoritativeConvocations: [] }),
+    getCommunications: () => [{ COMUNICACION_ID: 'COM-1', TIPO: 'CONVOCATORIA', ALUMNO_ID: 'ALU-001', REFERENCIA_ID: 'CON-B', CREADO_EN: '', ENVIADO_EN: '', ESTADO: 'PENDIENTE', ERROR: '', INTENTOS: 0 }]
+  } }));
+  try {
+    assert.equal(handlers.getAppCommunications().data.rows[0].competencia, 'B');
   } finally {
     handlers.setPanelRuntimeFactoryForTest(null);
   }
@@ -2046,6 +2207,35 @@ test('APP_COMMUNICATIONS_SEND_CONTEXT_GUARD_TEST', () => {
   state.activeRoute = 'dashboard';
   calls[0].onSuccess({ ok: true, data: {} });
   assert.equal(calls.filter((call) => call.name === 'getAppBootstrap').length, 0);
+});
+test('APP_CONVOCATION_SEND_ENABLED_SUCCESS_REFRESH_TEST', () => {
+  const calls = [];
+  const state = { activeRoute: 'convocations', ...bootstrap({ referenceData: { ...bootstrap().referenceData, runtimeCapabilities: { externalMailEnabled: true } } }), selectedProgrammedMatchId: 'PAR-001', selectedConvocationId: 'CON-001' };
+  createAppClientController({ callServer(name, args, onSuccess) { calls.push({ name, onSuccess }); if (name === 'commandSendPendingCommunications') onSuccess({ ok: true, data: {} }); }, state, render: {} }).sendPendingCommunications();
+  assert.equal(calls.map((call) => call.name).includes('getAppBootstrap'), true);
+});
+test('APP_CONVOCATION_SEND_ENABLED_FAILURE_VISIBLE_TEST', () => {
+  const errors = [];
+  const state = { activeRoute: 'convocations', ...bootstrap({ referenceData: { ...bootstrap().referenceData, runtimeCapabilities: { externalMailEnabled: true } } }), selectedProgrammedMatchId: 'PAR-001', selectedConvocationId: 'CON-001' };
+  createAppClientController({ callServer(name, args, onSuccess, onFailure) { onFailure({ ok: false, code: 'SEND_ERROR' }); }, state, render: { route() {}, error(message) { errors.push(message); } } }).sendPendingCommunications();
+  assert.equal(errors[0], 'No se pudo completar la operacion solicitada. [SEND_ERROR]');
+});
+test('APP_CONVOCATION_SEND_AFTER_MATCH_SWITCH_NO_HIJACK_TEST', () => {
+  const calls = [];
+  const state = { activeRoute: 'convocations', ...bootstrap({ referenceData: { ...bootstrap().referenceData, runtimeCapabilities: { externalMailEnabled: true } } }), selectedProgrammedMatchId: 'PAR-001', selectedConvocationId: 'CON-001' };
+  createAppClientController({ callServer(name, args, onSuccess) { calls.push({ name, onSuccess }); }, state, render: {} }).sendPendingCommunications();
+  state.selectedProgrammedMatchId = 'PAR-OTHER';
+  calls[0].onSuccess({ ok: true, data: {} });
+  assert.equal(calls.filter((call) => call.name === 'getAppBootstrap').length, 0);
+});
+test('APP_CONVOCATION_SEND_AFTER_ROUTE_CHANGE_NO_ERROR_TEST', () => {
+  const calls = [];
+  const errors = [];
+  const state = { activeRoute: 'convocations', ...bootstrap({ referenceData: { ...bootstrap().referenceData, runtimeCapabilities: { externalMailEnabled: true } } }), selectedProgrammedMatchId: 'PAR-001', selectedConvocationId: 'CON-001' };
+  createAppClientController({ callServer(name, args, onSuccess, onFailure) { calls.push({ onFailure }); }, state, render: { error(message) { errors.push(message); } } }).sendPendingCommunications();
+  state.activeRoute = 'dashboard';
+  calls[0].onFailure({ ok: false, code: 'SEND_ERROR' });
+  assert.deepEqual(errors, []);
 });
 test('APP_COMMUNICATIONS_RETRY_RPC_TEST', () => {
   const calls = [];
@@ -2084,3 +2274,159 @@ test('APP_CONFIG_NO_HARDCODED_FALLBACK_TEST', () => assert.equal(fs.readFileSync
 test('APP_CONFIG_NO_CONFIG_ID_TEST', () => assert.equal(JSON.stringify(handlers.getAppConfiguration ? configurationModel() : {}).includes('configId'), false));
 test('APP_CONFIG_NO_MODIFIED_BY_TEST', () => assert.equal(createAppRenderer({ state: appUiState('config') }).renderConfiguration().includes('modifiedBy'), false));
 test('APP_CONFIG_RUNTIME_CAPABILITY_TEST', () => assert.equal(createAppRenderer({ state: appUiState('config') }).renderConfiguration().includes('External mail'), true));
+
+test('APP_SAFE_BATCH_02_NO_UNDEFINED_NULL_OBJECT_RENDER_TEST', () => {
+  ['matches', 'postmatch', 'reports', 'communications', 'config'].forEach((route) => {
+    const renderer = createAppRenderer({ state: appUiState(route, {
+      postMatch: postMatchView({ readiness: { errors: [{ code: 'ERR_OBJECT' }], alerts: [{ code: 'ALERT_OBJECT' }] } }),
+      reports: reportsModel({ alerts: { sportAlerts: [{ code: 'REPORT_OBJECT', competencia: 'A' }], readinessIssues: [] } })
+    }) });
+    const html = renderer.render(route);
+    ['undefined', 'null', '[object Object]'].forEach((term) => assert.equal(html.includes(term), false, `${route} contains ${term}`));
+  });
+});
+
+test('APP_E2E_ATTENDANCE_FLOW_TEST', () => {
+  const calls = [];
+  let attendanceState = '';
+  const state = {};
+  const controller = createAppClientController({ callServer(name, args, onSuccess) {
+    calls.push({ name, args });
+    if (name === 'getAppBootstrap') onSuccess({ ok: true, data: bootstrap() });
+    if (name === 'getPanelAttendance') onSuccess({ ok: true, data: { sessionId: args[0] || 'SES-001', session: { sesionId: args[0] || 'SES-001' }, rows: [{ studentId: 'ALU-001', nombre: 'Alumno Ficticio', estadoActual: attendanceState, capabilities: { canMarkAttendance: !attendanceState } }] } });
+    if (name === 'commandCreateAttendance') { attendanceState = args[0].estado; onSuccess({ ok: true, data: {} }); }
+  }, state, render: { loading() {}, route() {} } });
+  controller.route('attendance');
+  controller.markAttendance('SES-001', 'ALU-001', 'A');
+  assert.equal(calls.filter((call) => call.name === 'commandCreateAttendance').length, 1);
+  assert.equal(state.attendance.rows[0].estadoActual, 'A');
+  assert.equal(state.selectedSessionId, 'SES-001');
+});
+
+test('APP_E2E_MATCH_LIFECYCLE_TEST', () => {
+  const calls = [];
+  let matches = [matchRow()];
+  const state = { activeRoute: 'matches', ...bootstrap() };
+  const controller = createAppClientController({ callServer(name, args, onSuccess) {
+    calls.push({ name, args });
+    if (name === 'getAppBootstrap') onSuccess({ ok: true, data: bootstrap({ referenceData: { ...bootstrap().referenceData, programmedMatches: matches.filter((match) => match.estado === 'PROGRAMADO'), playedMatches: matches.filter((match) => match.estado === 'JUGADO') } }) });
+    if (name === 'getAppMatches') onSuccess({ ok: true, data: matches });
+    if (name === 'commandCreateMatch') { matches = [...matches, matchRow({ partidoId: 'PAR-NEW', rival: args[0].RIVAL })]; onSuccess({ ok: true, data: {} }); }
+    if (name === 'commandUpdateMatch') { matches = matches.map((match) => match.partidoId === args[0] ? { ...match, sede: args[1].SEDE } : match); onSuccess({ ok: true, data: {} }); }
+    if (name === 'commandMarkMatchPlayed') { matches = matches.map((match) => match.partidoId === args[0] ? { ...match, estado: 'JUGADO', golesFavor: args[1].golesFavor, golesContra: args[1].golesContra } : match); onSuccess({ ok: true, data: {} }); }
+  }, state, render: { route() {} } });
+  controller.createMatch({ RIVAL: 'E2E P15 FICTICIO' });
+  controller.updateMatch('PAR-NEW', { SEDE: 'Cancha E2E' });
+  controller.markMatchPlayed('PAR-NEW', { golesFavor: 1, golesContra: 0 });
+  assert.equal(matches.filter((match) => match.partidoId === 'PAR-NEW' && match.estado === 'JUGADO' && match.sede === 'Cancha E2E').length, 1);
+  assert.equal(calls.filter((call) => call.name === 'getAppBootstrap').length, 3);
+});
+
+test('APP_E2E_CONVOCATION_FLOW_TEST', () => {
+  const calls = [];
+  const state = { activeRoute: 'convocations', ...bootstrap(), selectedProgrammedMatchId: 'PAR-001', selectedConvocationId: 'CON-001' };
+  const controller = createAppClientController({ callServer(name, args, onSuccess) {
+    calls.push({ name, args });
+    if (name === 'getAppBootstrap') onSuccess({ ok: true, data: { dashboard: {}, referenceData: state.referenceData, students: state.students || [] } });
+    else if (name === 'getPanelConvocation') onSuccess({ ok: true, data: { convocationId: args[0], details: [] } });
+    else onSuccess({ ok: true, data: name === 'commandGenerateConvocation' ? { convocationId: 'CON-001' } : {} });
+  }, state, render: { route() {} } });
+  state.referenceData.convocationProposals = [];
+  controller.generateConvocation('PAR-001');
+  state.referenceData.convocationProposals = [{ CONVOCATORIA_ID: 'CON-001', PARTIDO_ID: 'PAR-001', ESTADO: 'PROPUESTA' }];
+  controller.loadConvocation('CON-001');
+  controller.approveConvocation('CON-001', 'Coach Ficticio');
+  state.referenceData.convocationProposals = [{ CONVOCATORIA_ID: 'CON-001', PARTIDO_ID: 'PAR-001', ESTADO: 'APROBADA' }];
+  controller.prepareConvocationCommunications('CON-001');
+  assert.deepEqual(calls.map((call) => call.name), ['commandGenerateConvocation', 'getAppBootstrap', 'getPanelConvocation', 'commandApproveConvocation', 'getAppBootstrap', 'getPanelConvocation', 'commandPrepareConvocationCommunications', 'getAppBootstrap', 'getPanelConvocation']);
+});
+
+test('APP_E2E_POSTMATCH_FLOW_TEST', () => {
+  const calls = [];
+  let row = { ...postMatchView().rows[0], OBSERVACIONES: '' };
+  const state = {};
+  const controller = createAppClientController({ callServer(name, args, onSuccess) {
+    calls.push({ name, args });
+    if (name === 'getAppBootstrap') onSuccess({ ok: true, data: bootstrap({ referenceData: { ...bootstrap().referenceData, playedMatches: [matchRow({ partidoId: 'PAR-PLAYED', estado: 'JUGADO' })] } }) });
+    if (name === 'getAppConfiguration') onSuccess({ ok: true, data: configurationModel() });
+    if (name === 'getPanelParticipation') onSuccess({ ok: true, data: postMatchView({ rows: [row] }) });
+    if (name === 'commandSaveParticipation') { row = { ...row, PARTICIPACION_ID: 'PPP-001', ...args[2] }; onSuccess({ ok: true, data: {} }); }
+  }, state, render: { loading() {}, route() {} } });
+  controller.route('postmatch');
+  controller.saveParticipation('PAR-PLAYED', 'ALU-001', { MINUTOS_JUGADOS: 30, OBSERVACIONES: 'E2E P15' });
+  assert.equal(state.configuration.ready, true);
+  assert.equal(state.postMatch.rows[0].OBSERVACIONES, 'E2E P15');
+  assert.equal(calls.some((call) => call.name === 'getAppConfiguration'), true);
+});
+
+test('APP_E2E_COMMUNICATION_GOVERNANCE_TEST', () => {
+  assert.throws(() => createAppClientController({ callServer() {}, state: { activeRoute: 'communications', communications: communicationsModel() }, render: {} }).sendPendingCommunications(), /PANEL_CLIENT_MAIL_DISABLED/);
+  assert.throws(() => createAppClientController({ callServer() {}, state: { activeRoute: 'communications', communications: communicationsModel() }, render: {} }).retryCommunication('COM-001'), /PANEL_CLIENT_MAIL_DISABLED/);
+  const calls = [];
+  const controller = createAppClientController({ callServer(name, args, onSuccess) {
+    calls.push(name);
+    if (name === 'getAppBootstrap') onSuccess({ ok: true, data: bootstrap() });
+    else if (name === 'getAppCommunications') onSuccess({ ok: true, data: communicationsModel({ runtimeCapabilities: { externalMailEnabled: true } }) });
+    else onSuccess({ ok: true, data: {} });
+  }, state: { activeRoute: 'communications', communications: communicationsModel({ runtimeCapabilities: { externalMailEnabled: true } }) }, render: {} });
+  controller.sendPendingCommunications();
+  controller.retryCommunication('COM-001');
+  assert.deepEqual(calls.filter((name) => name.startsWith('command')), ['commandSendPendingCommunications', 'commandRetryCommunication']);
+});
+
+test('APP_E2E_REPORT_REFLECTION_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({ queries: {
+    getStudents: () => [student({ alumnoId: 'ALU-001', active: true })],
+    getParticipations: () => [{ PARTIDO_ID: 'PAR-PLAYED', ALUMNO_ID: 'ALU-001', CONDICION_INICIAL: 'TITULAR', MINUTOS_JUGADOS: 35, GOLES: 1, AMARILLAS: 0, ROJAS: 0, CALIFICACION: 5 }],
+    getStudentMetrics: () => ({ finalizedSessions: 1, pendingAbsences: 0, attendanceCount: 1, lateCount: 0, justifiedAbsenceCount: 0, unjustifiedAbsenceCount: 0, injuryCount: 0, compliancePercentage: 100, physicalPresencePercentage: 100, status: 'FINAL' }),
+    getMatches: () => [matchRow({ partidoId: 'PAR-PLAYED', estado: 'JUGADO', golesFavor: 1, golesContra: 0 })],
+    getPanelDashboard: () => ({ sportAlerts: [], readinessIssues: [] })
+  } }));
+  try {
+    const report = handlers.getAppReports().data;
+    assert.equal(report.teamSummary.A.played, 1);
+    assert.equal(report.teamSummary.A.wins, 1);
+    assert.equal(report.players[0].minutes, 35);
+    assert.equal(report.players[0].goals, 1);
+    assert.equal(report.players[0].averageRating, 5);
+    assert.equal(JSON.stringify(report).includes('Tutor'), false);
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('APP_E2E_CONFIG_READONLY_TEST', () => {
+  const html = createAppRenderer({ state: appUiState('config', { configuration: configurationModel({ entries: Array.from({ length: 25 }, (_, i) => ({ group: 'GENERAL', key: `CFG_${i}`, value: i, type: 'INTEGER', active: true })) }) }) }).renderConfiguration();
+  assert.equal(html.includes('25'), true);
+  assert.equal(html.includes('commandUpdateConfig'), false);
+  assert.equal(html.includes('Guardar'), false);
+});
+
+test('APP_E2E_GLOBAL_COMPETITION_FILTER_TEST', () => {
+  ['students', 'attendance', 'convocations', 'matches', 'postmatch', 'reports', 'communications'].forEach((route) => {
+    const html = createAppRenderer({ state: appUiState(route, {
+      selectedCompetition: 'B',
+      students: [student({ alumnoId: 'ALU-A', nombre: 'Alumno A', competenciaBase: 'A' }), student({ alumnoId: 'ALU-B', nombre: 'Alumno B', competenciaBase: 'B' })],
+      reports: reportsModel({ players: [{ ...reportsModel().players[0], nombre: 'Alumno A', competencia: 'A' }, { ...reportsModel().players[0], studentId: 'ALU-B', nombre: 'Alumno B', competencia: 'B' }] }),
+      communications: communicationsModel({ rows: [{ ...communicationsModel().rows[0], nombreAlumno: 'Alumno A', competencia: 'A' }, { ...communicationsModel().rows[0], communicationId: 'COM-B', nombreAlumno: 'Alumno B', competencia: 'B' }] })
+    }) }).render(route);
+    assert.equal(html.includes('Alumno A'), false, route);
+  });
+});
+
+test('APP_E2E_CROSS_ROUTE_ASYNC_ISOLATION_TEST', () => {
+  const calls = [];
+  const errors = [];
+  const state = {};
+  const controller = createAppClientController({ callServer(name, args, onSuccess, onFailure) { calls.push({ name, args, onSuccess, onFailure }); }, state, render: { loading() {}, route() {}, error(message) { errors.push(message); } } });
+  controller.route('matches');
+  controller.route('reports');
+  calls[0].onSuccess({ ok: true, data: bootstrap() });
+  const matchRead = calls.find((call) => call.name === 'getAppMatches');
+  if (matchRead) matchRead.onSuccess({ ok: true, data: [matchRow({ rival: 'Stale Match' })] });
+  const staleFailure = calls.find((call) => call.name === 'getAppBootstrap');
+  staleFailure.onFailure({ ok: false, code: 'REQUIRED_FIELD' });
+  assert.equal(state.activeRoute, 'reports');
+  assert.equal(JSON.stringify(state.matches || []).includes('Stale Match'), false);
+  assert.deepEqual(errors, []);
+});
