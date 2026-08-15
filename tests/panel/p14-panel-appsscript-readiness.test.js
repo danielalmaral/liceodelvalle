@@ -24,6 +24,7 @@ const { createAppsScriptRepositoryFactory } = require('../../src/adapters/AppsSc
 const { createAppsScriptMailAdapter } = require('../../src/adapters/AppsScriptMailAdapter');
 const { createExternalMailGuardAdapter, createLdvAppsScriptRuntime } = require('../../src/AppsScriptRuntimeBootstrap');
 const handlers = require('../../src/PanelHandlers');
+const { createPanelClientController } = require('../../src/PanelClientController');
 const { getLdvPanelHtml, onOpen, setupLdvOperationalSheetsWithDependencies } = require('../../src/PanelUi');
 const { createTriggerHandlers } = require('../../src/triggers/TriggerHandlers');
 const { createAppsScriptRuntime } = require('../../src/RuntimeComposition');
@@ -491,7 +492,7 @@ test('PANEL_NO_BUSINESS_RULE_DUPLICATION_TEST', () => {
     configService: null,
     convocationRepository: createArrayRepository([]),
     detailRepository: createArrayRepository([]),
-    queries: { getStudents: () => [], getAttendances: () => [], getSessions: () => [], getMatches: () => [{ partidoId: 'PAR-1' }], getCommunications: () => [], getParticipations: () => [], validateMatchParticipationReadiness: () => { readinessCalled += 1; return { alerts: [], errors: [] }; } }
+    queries: { getStudents: () => [], getAttendances: () => [], getSessions: () => [], getMatches: () => [{ partidoId: 'PAR-1', estado: 'JUGADO' }], getCommunications: () => [], getParticipations: () => [], validateMatchParticipationReadiness: () => { readinessCalled += 1; return { alerts: [], errors: [] }; } }
   });
   service.getDashboard();
   assert.equal(readinessCalled, 1);
@@ -597,6 +598,7 @@ test('PANEL_CONVOCATION_REPOSITORY_ORDER_INVARIANT_TEST', () => {
 
 test('PANEL_RED_ALERT_NO_DUPLICATION_TEST', () => {
   const options = runtimeOptions();
+  options.repositories.matchRepository = createArrayRepository([match({ ESTADO: 'JUGADO', GOLES_FAVOR: 1, GOLES_CONTRA: 0 })]);
   options.constructors.createParticipationService = () => ({
     getParticipations: () => [],
     validateMatchParticipationReadiness: () => ({ ready: true, errors: [], alerts: [{ code: 'RED_CARD_REVIEW_REQUIRED', studentId: 'ALU-001', matchId: 'PAR-001' }] })
@@ -606,6 +608,7 @@ test('PANEL_RED_ALERT_NO_DUPLICATION_TEST', () => {
 
 test('PANEL_READINESS_ISSUE_VISIBLE_TEST', () => {
   const options = runtimeOptions();
+  options.repositories.matchRepository = createArrayRepository([match({ ESTADO: 'JUGADO', GOLES_FAVOR: 1, GOLES_CONTRA: 0 })]);
   options.constructors.createParticipationService = () => ({
     getParticipations: () => [],
     validateMatchParticipationReadiness: () => ({ ready: false, errors: ['PARTICIPATION_MISSING_SELECTED_PLAYER'], alerts: [] })
@@ -1189,4 +1192,486 @@ test('P14_END_TO_END_FAKE_RUNTIME_TEST', () => {
   assert.equal(attendance.ALUMNO_ID, 'ALU-001');
   assert.equal(dashboard.attendanceSummary.captured, 1);
   assert.equal(JSON.stringify(runtime.queries.getEvents()).includes('family@example.invalid'), false);
+});
+
+function appendRecords(sheet, headers, records) {
+  records.forEach((record) => {
+    sheet.rows.push(headers.map((header) => record[header] === undefined ? '' : record[header]));
+  });
+}
+
+function productionLikeRuntimeFromSpreadsheet(spreadsheet, overrides = {}) {
+  return createLdvAppsScriptRuntime({
+    constructors: constructors(),
+    createConfigRepository,
+    createSheetRepository,
+    createTriggerHandlers,
+    environment: { getSpreadsheetId: () => 'fake-sheet', getExternalMailEnabled: () => false },
+    idGenerator: {
+      attendanceId: () => 'AST-REAL',
+      matchId: () => 'PAR-REAL',
+      operationId: () => 'OP-REAL',
+      participationId: () => 'PRT-REAL',
+      sessionId: () => 'SES-REAL'
+    },
+    lock: { runExclusive(callback) { return callback(); } },
+    mailAdapter: { send() { throw new Error('REAL_MAIL_FORBIDDEN'); } },
+    repositoryFactory: createAppsScriptRepositoryFactory({ spreadsheet, createSheetRepository, createConfigRepository }),
+    runtimeFactory: createAppsScriptRuntime,
+    spreadsheet,
+    utils,
+    ...overrides
+  });
+}
+
+function assertPanelSafe(value, seen = new Set()) {
+  if (value instanceof Date) assert.fail('Date instance crossed panel boundary');
+  if (typeof value === 'function') assert.fail('Function crossed panel boundary');
+  if (value && typeof value === 'object') {
+    if (seen.has(value)) assert.fail('Circular value crossed panel boundary');
+    seen.add(value);
+    if (Array.isArray(value)) {
+      value.forEach((item) => assert.notEqual(item, undefined));
+    }
+    Object.values(value).forEach((item) => assertPanelSafe(item, seen));
+    seen.delete(value);
+  }
+}
+
+test('APPS_SCRIPT_CONFIG_REPOSITORY_CONTRACT_TEST', () => {
+  const spreadsheet = fakeSpreadsheet();
+  setupOperationalSheets(spreadsheet, setupSheetWithHeaders);
+  appendRecords(spreadsheet.sheets.CONFIG, CONFIG_HEADERS, completeConfigRows());
+  const repo = createAppsScriptRepositoryFactory({ spreadsheet, createSheetRepository, createConfigRepository }).createRepository('CONFIG');
+  assert.equal(typeof repo.get, 'function');
+  assert.equal(typeof repo.getAll, 'function');
+  assert.equal(repo.get('CONVOCADOS_A').value, '18');
+});
+
+test('APPS_SCRIPT_RUNTIME_REAL_FACTORY_BOOTSTRAP_TEST', () => {
+  const spreadsheet = fakeSpreadsheet();
+  setupOperationalSheets(spreadsheet, setupSheetWithHeaders);
+  appendRecords(spreadsheet.sheets.CONFIG, CONFIG_HEADERS, completeConfigRows());
+  const runtime = productionLikeRuntimeFromSpreadsheet(spreadsheet);
+  assert.equal(runtime.queries.verifyConfigReady().ready, true);
+  assert.equal(runtime.queries.getPanelDashboard().attendanceSummary.expected, 0);
+});
+
+test('APPS_SCRIPT_EMPTY_CONFIG_FAIL_CLOSED_TEST', () => {
+  const spreadsheet = fakeSpreadsheet();
+  setupOperationalSheets(spreadsheet, setupSheetWithHeaders);
+  const runtime = productionLikeRuntimeFromSpreadsheet(spreadsheet);
+  assert.throws(() => runtime.queries.getPanelDashboard(), /CONFIG_REQUIRED_KEY_MISSING/);
+});
+
+test('FIRST_RUN_CONFIG_NOT_READY_TEST', () => {
+  const spreadsheet = fakeSpreadsheet();
+  setupOperationalSheets(spreadsheet, setupSheetWithHeaders);
+  assert.throws(() => productionLikeRuntimeFromSpreadsheet(spreadsheet).queries.verifyConfigReady(), /CONFIG_REQUIRED_KEY_MISSING/);
+});
+
+test('FIRST_RUN_CONFIG_READY_AFTER_PERSISTED_ROWS_TEST', () => {
+  const spreadsheet = fakeSpreadsheet();
+  setupOperationalSheets(spreadsheet, setupSheetWithHeaders);
+  appendRecords(spreadsheet.sheets.CONFIG, CONFIG_HEADERS, completeConfigRows({ TEMPORADA: 'P15_SMOKE' }));
+  assert.equal(productionLikeRuntimeFromSpreadsheet(spreadsheet).queries.verifyConfigReady().requiredKeys, 25);
+});
+
+test('PANEL_SERIALIZATION_DATE_TEST', () => {
+  assert.equal(handlers.toPanelSerializable(new Date('2026-02-01T00:00:00Z')), '2026-02-01T00:00:00.000Z');
+});
+
+test('PANEL_SERIALIZATION_NESTED_DATE_TEST', () => {
+  assert.equal(handlers.toPanelSerializable({ nested: [{ at: new Date('2026-02-01T00:00:00Z') }] }).nested[0].at, '2026-02-01T00:00:00.000Z');
+});
+
+test('PANEL_SERIALIZATION_NO_DATE_INSTANCE_TEST', () => {
+  const response = handlers.safePanelResponse(() => ({ at: new Date('2026-02-01T00:00:00Z') }));
+  assertPanelSafe(response);
+});
+
+test('PANEL_DASHBOARD_GOOGLE_RUN_SAFE_TEST', () => {
+  assertPanelSafe(handlers.safePanelResponse(() => createAppsScriptRuntime(runtimeOptions()).queries.getPanelDashboard()));
+});
+
+test('PANEL_ATTENDANCE_GOOGLE_RUN_SAFE_TEST', () => {
+  assertPanelSafe(handlers.safePanelResponse(() => createAppsScriptRuntime(runtimeOptions()).queries.getPanelAttendance('SES-001')));
+});
+
+test('PANEL_PARTICIPATION_GOOGLE_RUN_SAFE_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.matchRepository = createArrayRepository([match({ ESTADO: 'JUGADO', GOLES_FAVOR: 1, GOLES_CONTRA: 0 })]);
+  options.repositories.sessionRepository = createArrayRepository([session({ TIPO: 'PARTIDO', COMPETENCIA: 'A', PARTIDO_ID: 'PAR-001' })]);
+  assertPanelSafe(handlers.safePanelResponse(() => createAppsScriptRuntime(options).queries.getPanelParticipation('PAR-001')));
+});
+
+test('PANEL_BOOLEAN_FAIL_CLOSED_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.matchRepository = createArrayRepository([match({ ESTADO: 'JUGADO', GOLES_FAVOR: 1, GOLES_CONTRA: 0 })]);
+  options.repositories.sessionRepository = createArrayRepository([session({ TIPO: 'PARTIDO', COMPETENCIA: 'A', PARTIDO_ID: 'PAR-001' })]);
+  options.repositories.detailRepository = createArrayRepository([detail({ SELECCIONADO_FINAL: 'YES' })]);
+  assert.throws(() => createAppsScriptRuntime(options).queries.getPanelParticipation('PAR-001'), /BOOLEAN/);
+});
+
+test('PANEL_MULTIPLE_AUTHORITATIVE_CONVOCATIONS_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.convocationRepository = createArrayRepository([
+    convocation(),
+    { ...convocation(), CONVOCATORIA_ID: 'CON-002', ESTADO: 'ENVIADA' }
+  ]);
+  assert.throws(() => createAppsScriptRuntime(options).queries.getPanelDashboard(), /PANEL_MULTIPLE_AUTHORITATIVE_CONVOCATIONS/);
+});
+
+test('PANEL_ATTENDANCE_ID_AVAILABLE_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.attendanceRepository = createArrayRepository([{ ASISTENCIA_ID: 'AST-001', SESION_ID: 'SES-001', ALUMNO_ID: 'ALU-001', ESTADO: 'F' }]);
+  assert.equal(createAppsScriptRuntime(options).queries.getPanelAttendance('SES-001').rows[0].attendanceId, 'AST-001');
+});
+
+test('PANEL_ATTENDANCE_VIEW_SCOPED_GENERAL_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.studentRepository = createArrayRepository([student({ ALUMNO_ID: 'ALU-A', COMPETENCIA_BASE: 'A' }), student({ ALUMNO_ID: 'ALU-B', COMPETENCIA_BASE: 'B' })]);
+  assert.equal(createAppsScriptRuntime(options).queries.getPanelAttendance('SES-001').rows.length, 2);
+});
+
+test('PANEL_ATTENDANCE_VIEW_SCOPED_A_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.sessionRepository = createArrayRepository([session({ COMPETENCIA: 'A' })]);
+  options.repositories.studentRepository = createArrayRepository([student({ ALUMNO_ID: 'ALU-A', COMPETENCIA_BASE: 'A' }), student({ ALUMNO_ID: 'ALU-B', COMPETENCIA_BASE: 'B' })]);
+  assert.deepEqual(createAppsScriptRuntime(options).queries.getPanelAttendance('SES-001').rows.map((row) => row.studentId), ['ALU-A']);
+});
+
+test('PANEL_ATTENDANCE_VIEW_SCOPED_B_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.sessionRepository = createArrayRepository([session({ COMPETENCIA: 'B' })]);
+  options.repositories.studentRepository = createArrayRepository([student({ ALUMNO_ID: 'ALU-A', COMPETENCIA_BASE: 'A' }), student({ ALUMNO_ID: 'ALU-B', COMPETENCIA_BASE: 'B' })]);
+  assert.deepEqual(createAppsScriptRuntime(options).queries.getPanelAttendance('SES-001').rows.map((row) => row.studentId), ['ALU-B']);
+});
+
+test('PANEL_ATTENDANCE_VIEW_INACTIVE_EXCLUDED_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.studentRepository = createArrayRepository([student({ ALUMNO_ID: 'ALU-A' }), student({ ALUMNO_ID: 'ALU-X', ACTIVO: false })]);
+  assert.deepEqual(createAppsScriptRuntime(options).queries.getPanelAttendance('SES-001').rows.map((row) => row.studentId), ['ALU-A']);
+});
+
+test('PANEL_ATTENDANCE_VIEW_ORDER_INVARIANT_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.studentRepository = createArrayRepository([
+    student({ ALUMNO_ID: 'ALU-2', NOMBRE: 'Beto', APELLIDOS: 'Zeta', GRUPO: 'B' }),
+    student({ ALUMNO_ID: 'ALU-1', NOMBRE: 'Ana', APELLIDOS: 'Alfa', GRUPO: 'A' })
+  ]);
+  assert.deepEqual(createAppsScriptRuntime(options).queries.getPanelAttendance('SES-001').rows.map((row) => row.studentId), ['ALU-1', 'ALU-2']);
+});
+
+test('PANEL_POSTMATCH_ATTENDANCE_DERIVED_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.matchRepository = createArrayRepository([match({ ESTADO: 'JUGADO', GOLES_FAVOR: 1, GOLES_CONTRA: 0 })]);
+  options.repositories.sessionRepository = createArrayRepository([session({ SESION_ID: 'SES-MATCH', TIPO: 'PARTIDO', COMPETENCIA: 'A', PARTIDO_ID: 'PAR-001' })]);
+  options.repositories.attendanceRepository = createArrayRepository([{ ASISTENCIA_ID: 'AST-MATCH', SESION_ID: 'SES-MATCH', ALUMNO_ID: 'ALU-001', ESTADO: 'R' }]);
+  const row = createAppsScriptRuntime(options).queries.getPanelParticipation('PAR-001').rows[0];
+  assert.equal(row.ASISTENCIA_ESTADO, 'R');
+  assert.equal(row.ASISTIO_DERIVADO, true);
+  assert.equal(row.attendanceId, 'AST-MATCH');
+});
+
+test('PANEL_POSTMATCH_MISSING_ATTENDANCE_ISSUE_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.matchRepository = createArrayRepository([match({ ESTADO: 'JUGADO', GOLES_FAVOR: 1, GOLES_CONTRA: 0 })]);
+  options.repositories.sessionRepository = createArrayRepository([session({ SESION_ID: 'SES-MATCH', TIPO: 'PARTIDO', COMPETENCIA: 'A', PARTIDO_ID: 'PAR-001' })]);
+  const view = createAppsScriptRuntime(options).queries.getPanelParticipation('PAR-001');
+  assert.equal(view.issues.some((issue) => issue.code === 'PANEL_POSTMATCH_ATTENDANCE_REQUIRED'), true);
+});
+
+test('PANEL_POSTMATCH_SELECTED_ONLY_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.matchRepository = createArrayRepository([match({ ESTADO: 'JUGADO', GOLES_FAVOR: 1, GOLES_CONTRA: 0 })]);
+  options.repositories.sessionRepository = createArrayRepository([session({ TIPO: 'PARTIDO', COMPETENCIA: 'A', PARTIDO_ID: 'PAR-001' })]);
+  options.repositories.studentRepository = createArrayRepository([student({ ALUMNO_ID: 'ALU-001' }), student({ ALUMNO_ID: 'ALU-002' })]);
+  options.repositories.detailRepository = createArrayRepository([detail({ ALUMNO_ID: 'ALU-001' }), detail({ DETALLE_ID: 'DET-002', ALUMNO_ID: 'ALU-002', SELECCIONADO_FINAL: false })]);
+  assert.deepEqual(createAppsScriptRuntime(options).queries.getPanelParticipation('PAR-001').rows.map((row) => row.ALUMNO_ID), ['ALU-001']);
+});
+
+test('PANEL_DASHBOARD_NO_PROGRAMMED_MATCH_NOT_PLAYED_NOISE_TEST', () => {
+  assert.equal(createAppsScriptRuntime(runtimeOptions()).queries.getPanelDashboard().readinessIssues.length, 0);
+});
+
+test('PANEL_NEXT_MATCH_A_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.matchRepository = createArrayRepository([match({ PARTIDO_ID: 'PAR-B', COMPETENCIA: 'B' }), match({ PARTIDO_ID: 'PAR-A', COMPETENCIA: 'A' })]);
+  assert.equal(createAppsScriptRuntime(options).queries.getPanelDashboard().nextMatchA.partidoId, 'PAR-A');
+});
+
+test('PANEL_NEXT_MATCH_B_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.matchRepository = createArrayRepository([match({ PARTIDO_ID: 'PAR-A', COMPETENCIA: 'A' }), match({ PARTIDO_ID: 'PAR-B', COMPETENCIA: 'B' })]);
+  assert.equal(createAppsScriptRuntime(options).queries.getPanelDashboard().nextMatchB.partidoId, 'PAR-B');
+});
+
+test('PANEL_MATCH_ORDER_INVARIANT_TEST', () => {
+  const options = runtimeOptions();
+  options.repositories.matchRepository = createArrayRepository([
+    match({ PARTIDO_ID: 'PAR-2', FECHA: '2026-03-01', HORA_PARTIDO: '10:00' }),
+    match({ PARTIDO_ID: 'PAR-1', FECHA: '2026-02-01', HORA_PARTIDO: '10:00' })
+  ]);
+  assert.deepEqual(createAppsScriptRuntime(options).queries.getPanelDashboard().upcomingMatches.map((row) => row.partidoId), ['PAR-1', 'PAR-2']);
+});
+
+test('PANEL_REFERENCE_DATA_TEST', () => {
+  const data = createAppsScriptRuntime(runtimeOptions()).queries.getPanelReferenceData();
+  assert.equal(Array.isArray(data.openSessions), true);
+  assert.equal(Array.isArray(data.programmedMatches), true);
+  assert.deepEqual(data.runtimeCapabilities, { externalMailEnabled: true });
+});
+
+test('PANEL_REFERENCE_DATA_PII_TEST', () => {
+  const data = createAppsScriptRuntime(runtimeOptions()).queries.getPanelReferenceData();
+  assert.equal(JSON.stringify(data).includes('family@example.invalid'), false);
+});
+
+function captureRpcController() {
+  const calls = [];
+  const controller = createPanelClientController({
+    callServer(name, args, onSuccess, onFailure) {
+      calls.push({ name, args, hasSuccess: typeof onSuccess === 'function', hasFailure: typeof onFailure === 'function' });
+      onSuccess({ ok: true, data: {} });
+    },
+    state: { referenceData: { runtimeCapabilities: { externalMailEnabled: true }, openSessions: [{ sesionId: 'SES-001' }] } }
+  });
+  return { calls, controller };
+}
+
+test('PANEL_CLIENT_ATTENDANCE_LOAD_SESSION_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.loadAttendance('SES-001');
+  assert.deepEqual(calls[0], { name: 'getPanelAttendance', args: ['SES-001'], hasSuccess: true, hasFailure: true });
+});
+
+test('PANEL_CLIENT_ATTENDANCE_MARK_A_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.markAttendance('SES-001', 'ALU-001', 'A');
+  assert.equal(calls[0].name, 'commandCreateAttendance');
+  assert.deepEqual(calls[0].args[0], { sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'A' });
+});
+
+test('PANEL_CLIENT_ATTENDANCE_MARK_R_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.markAttendance('SES-001', 'ALU-001', 'R');
+  assert.equal(calls[0].args[0].estado, 'R');
+});
+
+test('PANEL_CLIENT_ATTENDANCE_MARK_F_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.markAttendance('SES-001', 'ALU-001', 'F');
+  assert.equal(calls[0].args[0].estado, 'F');
+});
+
+test('PANEL_CLIENT_ABSENCE_USES_ATTENDANCE_ID_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.resolveAbsence('AST-001', 'FJ', 'motivo');
+  assert.deepEqual(calls[0].args, ['AST-001', 'FJ', { reason: 'motivo' }]);
+});
+
+test('PANEL_CLIENT_ABSENCE_FJ_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.resolveAbsence('AST-001', 'FJ');
+  assert.equal(calls[0].args[1], 'FJ');
+});
+
+test('PANEL_CLIENT_ABSENCE_LES_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.resolveAbsence('AST-001', 'LES');
+  assert.equal(calls[0].args[1], 'LES');
+});
+
+test('PANEL_CLIENT_NO_FI_TEST', () => {
+  assert.throws(() => captureRpcController().controller.resolveAbsence('AST-001', 'FI'), /PANEL_CLIENT_ABSENCE_TARGET_REJECTED/);
+});
+
+test('PANEL_CLIENT_MATCH_CREATE_RPC_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.createMatch({ rival: 'Rival Ficticio' });
+  assert.equal(calls[0].name, 'commandCreateMatch');
+});
+
+test('PANEL_CLIENT_MATCH_UPDATE_RPC_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.updateMatch('PAR-001', { sede: 'Cancha' });
+  assert.deepEqual(calls[0].args, ['PAR-001', { sede: 'Cancha' }]);
+});
+
+test('PANEL_CLIENT_MATCH_PLAYED_RPC_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.markMatchPlayed('PAR-001', { golesFavor: 1, golesContra: 0 });
+  assert.equal(calls[0].name, 'commandMarkMatchPlayed');
+});
+
+test('PANEL_CLIENT_MATCH_CANCEL_RPC_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.cancelMatch('PAR-001');
+  assert.deepEqual(calls[0].args, ['PAR-001']);
+});
+
+test('PANEL_CLIENT_CONVOCATION_GENERATE_RPC_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.generateConvocation('PAR-001');
+  assert.deepEqual(calls[0], { name: 'commandGenerateConvocation', args: ['PAR-001'], hasSuccess: true, hasFailure: true });
+});
+
+test('PANEL_CLIENT_CONVOCATION_LOAD_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.loadConvocation('CON-001');
+  assert.equal(calls[0].name, 'getPanelConvocation');
+});
+
+test('PANEL_CLIENT_SELECTION_RPC_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.setFinalSelection('CON-001', 'ALU-001', true, 'motivo');
+  assert.equal(calls[0].name, 'commandSetFinalSelection');
+});
+
+test('PANEL_CLIENT_POSITION_RPC_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.assignPosition('CON-001', 'ALU-001', 'DEF', 'motivo');
+  assert.equal(calls[0].name, 'commandAssignPosition');
+});
+
+test('PANEL_CLIENT_APPROVAL_RPC_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.approveConvocation('CON-001');
+  assert.equal(calls[0].name, 'commandApproveConvocation');
+});
+
+test('PANEL_CLIENT_PREPARE_COMMUNICATIONS_RPC_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.prepareConvocationCommunications('CON-001');
+  assert.equal(calls[0].name, 'commandPrepareConvocationCommunications');
+});
+
+test('PANEL_CLIENT_MAIL_CAPABILITY_TEST', () => {
+  const calls = [];
+  const controller = createPanelClientController({
+    callServer(name, args, onSuccess, onFailure) { calls.push({ name, args, onSuccess, onFailure }); },
+    state: { referenceData: { runtimeCapabilities: { externalMailEnabled: false } } }
+  });
+  assert.throws(() => controller.sendPendingCommunications(), /PANEL_CLIENT_MAIL_DISABLED/);
+  assert.equal(calls.length, 0);
+});
+
+test('PANEL_CLIENT_POSTMATCH_SAVE_RPC_TEST', () => {
+  const { calls, controller } = captureRpcController();
+  controller.saveParticipation('PAR-001', 'ALU-001', { MINUTOS_JUGADOS: 60, ASISTENCIA_ESTADO: 'F' });
+  assert.deepEqual(calls[0].args, ['PAR-001', 'ALU-001', { MINUTOS_JUGADOS: 60, ASISTENCIA_ESTADO: 'F' }]);
+});
+
+test('PANEL_CLIENT_POSTMATCH_ATTENDANCE_READ_ONLY_TEST', () => {
+  const html = getLdvPanelHtml();
+  assert.equal(html.includes('ASISTENCIA_ESTADO es lectura'), true);
+});
+
+test('PANEL_CLIENT_RPC_FAILURE_HANDLER_TEST', () => {
+  let failure;
+  createPanelClientController({
+    callServer(name, args, onSuccess, onFailure) { failure = onFailure; },
+    render: { error(message) { assert.equal(message, 'No se pudo completar la operacion solicitada.'); } }
+  }).loadDashboard();
+  assert.equal(typeof failure, 'function');
+  failure(new Error('STACK family@example.invalid'));
+});
+
+test('PANEL_TEST_SEAM_NOT_PUBLIC_RPC_TEST', () => {
+  assert.equal(typeof handlers.setPanelRuntimeFactoryForTest_, 'function');
+  assert.equal(String(getLdvPanelHtml()).includes('setPanelRuntimeFactoryForTest'), false);
+});
+
+test('PANEL_SAVE_PARTICIPATION_DERIVES_CONVOCATION_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({
+    queries: { getPanelParticipation: () => ({ rows: [{ ALUMNO_ID: 'ALU-001', CONVOCATORIA_ID: 'CON-SERVER', ASISTENCIA_ESTADO: 'A', ASISTIO_DERIVADO: true, PARTICIPACION_ID: '' }] }) },
+    commands: { createParticipation(input) { assert.equal(input.CONVOCATORIA_ID, 'CON-SERVER'); return input; } },
+    runtime: { idGenerator: { operationId: () => 'OP-SERVER' } }
+  }));
+  try {
+    assert.equal(handlers.commandSaveParticipation('PAR-001', 'ALU-001', { CONVOCATORIA_ID: 'CON-CLIENT', MINUTOS_JUGADOS: 1, GOLES: 0, AMARILLAS: 0, ROJAS: 0 }).ok, true);
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('PANEL_SAVE_PARTICIPATION_DERIVES_ATTENDANCE_STATE_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({
+    queries: { getPanelParticipation: () => ({ rows: [{ ALUMNO_ID: 'ALU-001', CONVOCATORIA_ID: 'CON-001', ASISTENCIA_ESTADO: 'R', ASISTIO_DERIVADO: true, PARTICIPACION_ID: '' }] }) },
+    commands: { createParticipation(input) { assert.equal(input.ASISTENCIA_ESTADO, 'R'); return input; } },
+    runtime: { idGenerator: { operationId: () => 'OP-SERVER' } }
+  }));
+  try {
+    assert.equal(handlers.commandSaveParticipation('PAR-001', 'ALU-001', { ASISTENCIA_ESTADO: 'F' }).ok, true);
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('PANEL_SAVE_PARTICIPATION_DERIVES_ASISTIO_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({
+    queries: { getPanelParticipation: () => ({ rows: [{ ALUMNO_ID: 'ALU-001', CONVOCATORIA_ID: 'CON-001', ASISTENCIA_ESTADO: 'F', ASISTIO_DERIVADO: false, PARTICIPACION_ID: '' }] }) },
+    commands: { createParticipation(input) { assert.equal(input.ASISTIO, false); return input; } },
+    runtime: { idGenerator: { operationId: () => 'OP-SERVER' } }
+  }));
+  try {
+    assert.equal(handlers.commandSaveParticipation('PAR-001', 'ALU-001', { ASISTIO: true }).ok, true);
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('PANEL_SAVE_PARTICIPATION_CLIENT_STATE_IGNORED_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({
+    queries: { getPanelParticipation: () => ({ rows: [{ ALUMNO_ID: 'ALU-001', CONVOCATORIA_ID: 'CON-001', ASISTENCIA_ESTADO: 'A', ASISTIO_DERIVADO: true, PARTICIPACION_ID: '' }] }) },
+    commands: { createParticipation(input) { assert.equal(input.PARTICIPACION_ID, undefined); return input; } },
+    runtime: { idGenerator: { operationId: () => 'OP-SERVER' } }
+  }));
+  try {
+    assert.equal(handlers.commandSaveParticipation('PAR-001', 'ALU-001', { PARTICIPACION_ID: 'PRT-CLIENT' }).ok, true);
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('PANEL_SAVE_PARTICIPATION_CREATE_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({
+    queries: { getPanelParticipation: () => ({ rows: [{ ALUMNO_ID: 'ALU-001', CONVOCATORIA_ID: 'CON-001', ASISTENCIA_ESTADO: 'A', ASISTIO_DERIVADO: true, PARTICIPACION_ID: '' }] }) },
+    commands: { createParticipation(input) { return { created: input.ALUMNO_ID }; } },
+    runtime: { idGenerator: { operationId: () => 'OP-SERVER' } }
+  }));
+  try {
+    assert.equal(handlers.commandSaveParticipation('PAR-001', 'ALU-001', {}).data.created, 'ALU-001');
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('PANEL_SAVE_PARTICIPATION_UPDATE_TEST', () => {
+  handlers.setPanelRuntimeFactoryForTest(() => ({
+    queries: { getPanelParticipation: () => ({ rows: [{ ALUMNO_ID: 'ALU-001', CONVOCATORIA_ID: 'CON-001', ASISTENCIA_ESTADO: 'A', ASISTIO_DERIVADO: true, PARTICIPACION_ID: 'PRT-001' }] }) },
+    commands: { updateParticipation(id, input) { assert.equal(id, 'PRT-001'); return { updated: input.ALUMNO_ID }; } },
+    runtime: { idGenerator: { operationId: () => 'OP-SERVER' } }
+  }));
+  try {
+    assert.equal(handlers.commandSaveParticipation('PAR-001', 'ALU-001', {}).data.updated, 'ALU-001');
+  } finally {
+    handlers.setPanelRuntimeFactoryForTest(null);
+  }
+});
+
+test('P14_REAL_BOOTSTRAP_FAKE_SPREADSHEET_TEST', () => {
+  const spreadsheet = fakeSpreadsheet();
+  setupOperationalSheets(spreadsheet, setupSheetWithHeaders);
+  appendRecords(spreadsheet.sheets.CONFIG, CONFIG_HEADERS, completeConfigRows());
+  appendRecords(spreadsheet.sheets.ALUMNOS, STUDENT_HEADERS, [student()]);
+  appendRecords(spreadsheet.sheets.TUTORES, TUTOR_HEADERS, [tutor()]);
+  appendRecords(spreadsheet.sheets.SESIONES, SESSION_HEADERS, [session()]);
+  const runtime = productionLikeRuntimeFromSpreadsheet(spreadsheet);
+  assert.equal(runtime.queries.getPanelDashboard().attendanceBySession[0].expected, 1);
+  runtime.commands.createAttendance({ sesionId: 'SES-001', alumnoId: 'ALU-001', estado: 'A' });
+  runtime.commands.createMatch({ COMPETENCIA: 'A', JORNADA: 'J2', RIVAL: 'Rival Ficticio', FECHA: '2026-02-02', HORA_PARTIDO: '10:00', SEDE: 'Cancha', LOCAL_VISITANTE: 'LOCAL', DURACION_MINUTOS: 60 }, { operationId: 'OP-MATCH', actor: 'coach' });
+  assert.equal(spreadsheet.sheets.PARTIDOS.rows.length, 2);
+  assert.equal(spreadsheet.sheets.BITACORA.rows.length > 1, true);
 });
