@@ -1,0 +1,12 @@
+<script>
+var appState={activeRoute:"dashboard",selectedCompetition:"ALL",studentFilters:{},matchFilters:{},reportFilters:{},communicationFilters:{}};
+function appRun(name,args,ok,fail){google.script.run.withSuccessHandler(ok).withFailureHandler(fail)[name].apply(google.script.run,args||[]);}
+function appError(message){var node=document.getElementById("app-error");if(node)node.textContent=message||"";}
+function appFeedback(message){var node=document.getElementById("app-feedback");if(node)node.textContent=message||"";}
+var appController;
+var appRenderer=createAppRenderer({state:appState,document:document,controller:{route:function(route){return appController.route(route);},loadAttendance:function(id){return appController.loadAttendance(id);},markAttendance:function(a,b,c){return appController.markAttendance(a,b,c);},resolveAbsence:function(a,b,c){return appController.resolveAbsence(a,b,c);},generateConvocation:function(id){return appController.generateConvocation(id);},loadConvocation:function(id){return appController.loadConvocation(id);},setFinalSelection:function(a,b,c,d){return appController.setFinalSelection(a,b,c,d);},assignPosition:function(a,b,c,d){return appController.assignPosition(a,b,c,d);},approveConvocation:function(a,b){return appController.approveConvocation(a,b);},prepareConvocationCommunications:function(id){return appController.prepareConvocationCommunications(id);},sendPendingCommunications:function(){return appController.sendPendingCommunications();},createMatch:function(input){return appController.createMatch(input);},updateMatch:function(a,b,c){return appController.updateMatch(a,b,c);},markMatchPlayed:function(a,b,c){return appController.markMatchPlayed(a,b,c);},cancelMatch:function(a,b){return appController.cancelMatch(a,b);},selectPlayedMatch:function(id){return appController.selectPlayedMatch(id);},saveParticipation:function(a,b,c,d){return appController.saveParticipation(a,b,c,d);},retryCommunication:function(id){return appController.retryCommunication(id);}}});
+appController=createAppClientController({callServer:appRun,state:appState,render:{loading:function(){var c=document.getElementById("app-content");if(c)c.innerHTML="<div class=\"empty-state\">Cargando</div>";},route:function(route){appRenderer.render(route);},error:appError,feedback:appFeedback}});
+document.getElementById("ldv-app").innerHTML=appRenderer.renderShell();
+appRenderer.attachEvents(document);
+if(typeof google!=="undefined"&&google.script&&google.script.run){appController.loadBootstrap("dashboard");}
+</script>

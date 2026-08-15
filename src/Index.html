@@ -1,0 +1,18 @@
+<!doctype html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Liceo del Valle - Futbol</title>
+  <?!= include('AppStyles'); ?>
+</head>
+<body>
+  <div id="ldv-app"></div>
+  <script>
+    <?!= getAppClientControllerSource(); ?>
+    <?!= getAppRendererSource(); ?>
+  </script>
+  <?!= include('AppClient'); ?>
+</body>
+</html>
