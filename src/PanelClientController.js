@@ -61,6 +61,9 @@ function createPanelClientController(dependencies) {
 
   function loadAttendance(sessionId) {
     var id = selectedSessionId(sessionId);
+    if (!id) {
+      return null;
+    }
     setState('selectedSessionId', id);
     return rpc('getPanelAttendance', [id], 'attendance', render.attendance);
   }
@@ -136,6 +139,10 @@ function createPanelClientController(dependencies) {
   }
 
   function loadPostMatch(matchId) {
+    if (!matchId) {
+      return null;
+    }
+    setState('selectedPlayedMatchId', matchId);
     return rpc('getPanelParticipation', [matchId], 'postMatch', render.postMatch);
   }
 

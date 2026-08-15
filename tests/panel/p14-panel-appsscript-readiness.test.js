@@ -1242,6 +1242,126 @@ function panelRendererHarness(overrides = {}) {
   return { calls, controller, state, renderer: createPanelRenderer({ state, controller }) };
 }
 
+function namedContainer(elements) {
+  return {
+    querySelectorAll(selector) {
+      assert.equal(selector, '[name]');
+      return elements;
+    }
+  };
+}
+
+function namedForm(elements) {
+  return { elements };
+}
+
+function fakeParticipationButton(row, attrs = {}) {
+  return {
+    parentNode: { parentNode: row },
+    getAttribute(name) {
+      return attrs[name] || '';
+    }
+  };
+}
+
+function panelUiAsyncHarness(initialState = {}) {
+  const calls = [];
+  const content = { className: '', innerHTML: '' };
+  const doc = { getElementById(id) { return id === 'content' ? content : { textContent: '' }; } };
+  const state = {
+    referenceData: {
+      openSessions: [{ sesionId: 'SES-001', competencia: 'A', fecha: '2026-02-03' }],
+      programmedMatches: [{ partidoId: 'PAR-001', rival: 'Rival', competencia: 'A', fecha: '2026-02-10' }],
+      playedMatches: [{ partidoId: 'PAR-002', rival: 'Jugado', competencia: 'A', fecha: '2026-02-01' }],
+      convocationProposals: [],
+      authoritativeConvocations: [],
+      runtimeCapabilities: { externalMailEnabled: true }
+    },
+    ...initialState
+  };
+  let currentView = 'dashboard';
+  let controller;
+  let renderer;
+
+  function callServer(name, args, onSuccess, onFailure) {
+    calls.push({ name, args, onSuccess, onFailure });
+    return calls[calls.length - 1];
+  }
+
+  function routeDashboard(data) {
+    if (currentView === 'dashboard') renderer.render('dashboard', data);
+    else if (currentView === 'alerts') renderer.render('alerts', data);
+  }
+
+  function openConvocations() {
+    const id = state.selectedProgrammedMatchId || ((state.referenceData.programmedMatches || [])[0] || {}).partidoId || '';
+    if (id) renderer.dispatch({ type: 'resolveConvocationForMatch', matchId: id });
+    else renderer.render('convocations');
+  }
+
+  function openPostMatch() {
+    const id = state.selectedPlayedMatchId || ((state.referenceData.playedMatches || [])[0] || {}).partidoId || '';
+    renderer.render('postmatch');
+    if (id) controller.loadPostMatch(id);
+  }
+
+  controller = createPanelClientController({
+    callServer,
+    state,
+    render: {
+      dashboard: routeDashboard,
+      referenceData() {
+        if (currentView === 'matches') renderer.render('matches');
+        else if (currentView === 'convocations') openConvocations();
+        else if (currentView === 'postmatch') openPostMatch();
+      },
+      attendance(data) { renderer.render('attendance', data); },
+      convocation(data) { renderer.render('convocations', data); },
+      postMatch(data) { renderer.render('postmatch', data); },
+      matchWrite() {
+        controller.loadReferenceData(() => {
+          controller.loadDashboard();
+          renderer.render('matches');
+        });
+      },
+      convocationWrite(data) {
+        controller.loadReferenceData(() => {
+          if (data && data.CONVOCATORIA_ID) controller.loadConvocation(data.CONVOCATORIA_ID);
+          else openConvocations();
+        });
+      },
+      communicationWrite() { controller.loadReferenceData(() => renderer.render('convocations')); },
+      participationWrite() { controller.loadPostMatch(state.selectedPlayedMatchId); }
+    }
+  });
+  renderer = createPanelRenderer({ state, controller, document: doc });
+
+  function load(view) {
+    currentView = view;
+    if (view === 'dashboard') {
+      controller.loadDashboard();
+      controller.loadReferenceData();
+    } else if (view === 'attendance') {
+      controller.loadReferenceData(() => controller.loadAttendance());
+    } else if (view === 'matches') {
+      controller.loadReferenceData(() => renderer.render('matches'));
+    } else if (view === 'convocations') {
+      controller.loadReferenceData(() => openConvocations());
+    } else if (view === 'postmatch') {
+      controller.loadReferenceData(() => openPostMatch());
+    } else if (view === 'alerts') {
+      controller.loadDashboard();
+      renderer.render('alerts');
+    }
+  }
+
+  function succeed(call, data) {
+    call.onSuccess({ ok: true, data });
+  }
+
+  return { calls, content, controller, get currentView() { return currentView; }, load, renderer, state, succeed };
+}
+
 test('PANEL_UI_NAVIGATION_BINDINGS_TEST', () => {
   const html = getLdvPanelHtml();
   assert.equal(html.includes('addEventListener("click"'), true);
@@ -1467,12 +1587,299 @@ test('PANEL_UI_POSTMATCH_SAVE_PAYLOAD_TEST', () => {
   assert.deepEqual(calls.at(-1), { name: 'saveParticipation', args: ['PAR-002', 'ALU-001', { CONDICION_INICIAL: 'TITULAR', MINUTOS_JUGADOS: '60' }] });
 });
 
+test('PANEL_UI_POSTMATCH_DOM_PAYLOAD_TEST', () => {
+  const { calls, renderer } = panelRendererHarness();
+  const row = namedContainer([
+    { name: 'CONDICION_INICIAL', value: 'SUPLENTE' },
+    { name: 'MINUTOS_JUGADOS', value: '15' },
+    { name: 'GOLES', value: '1' },
+    { name: 'AMARILLAS', value: '0' },
+    { name: 'ROJAS', value: '0' },
+    { name: 'CALIFICACION', value: '4.5' },
+    { name: 'OBSERVACIONES', value: 'ok ficticio' }
+  ]);
+  renderer.dispatch({ type: 'saveParticipationFromElement', button: fakeParticipationButton(row, { 'data-match-id': 'PAR-002', 'data-student-id': 'ALU-001' }) });
+  assert.deepEqual(calls.at(-1), {
+    name: 'saveParticipation',
+    args: ['PAR-002', 'ALU-001', { CONDICION_INICIAL: 'SUPLENTE', MINUTOS_JUGADOS: '15', GOLES: '1', AMARILLAS: '0', ROJAS: '0', CALIFICACION: '4.5', OBSERVACIONES: 'ok ficticio' }]
+  });
+});
+
+test('PANEL_UI_POSTMATCH_DOM_ZERO_VALUES_TEST', () => {
+  const { calls, renderer } = panelRendererHarness();
+  const row = namedContainer([
+    { name: 'CONDICION_INICIAL', value: 'TITULAR' },
+    { name: 'MINUTOS_JUGADOS', value: '0' },
+    { name: 'GOLES', value: '0' },
+    { name: 'AMARILLAS', value: '0' },
+    { name: 'ROJAS', value: '0' },
+    { name: 'CALIFICACION', value: '0' },
+    { name: 'OBSERVACIONES', value: '' }
+  ]);
+  renderer.dispatch({ type: 'saveParticipationFromElement', button: fakeParticipationButton(row, { 'data-match-id': 'PAR-002', 'data-student-id': 'ALU-001' }) });
+  assert.deepEqual(calls.at(-1).args[2], { CONDICION_INICIAL: 'TITULAR', MINUTOS_JUGADOS: '0', GOLES: '0', AMARILLAS: '0', ROJAS: '0', CALIFICACION: '0', OBSERVACIONES: '' });
+});
+
+test('PANEL_UI_POSTMATCH_CLIENT_AUTHORITY_FIELDS_EXCLUDED_TEST', () => {
+  const { calls, renderer } = panelRendererHarness();
+  const row = namedContainer([
+    { name: 'CONDICION_INICIAL', value: 'TITULAR' },
+    { name: 'MINUTOS_JUGADOS', value: '60' },
+    { name: 'ASISTENCIA_ESTADO', value: 'F' },
+    { name: 'ASISTIO', value: 'FALSE' },
+    { name: 'CONVOCATORIA_ID', value: 'CON-CLIENT' },
+    { name: 'PARTICIPACION_ID', value: 'PRT-CLIENT' },
+    { name: 'ALUMNO_ID', value: 'ALU-CLIENT' }
+  ]);
+  renderer.dispatch({ type: 'saveParticipationFromElement', button: fakeParticipationButton(row, { 'data-match-id': 'PAR-002', 'data-student-id': 'ALU-001' }) });
+  assert.deepEqual(calls.at(-1).args[2], { CONDICION_INICIAL: 'TITULAR', MINUTOS_JUGADOS: '60' });
+});
+
 test('PANEL_UI_ALERTS_FROM_DASHBOARD_TEST', () => {
   const { renderer } = panelRendererHarness();
   const html = renderer.renderAlerts();
   assert.equal(html.includes('LOW_PARTICIPATION_STREAK'), true);
   assert.equal(html.includes('PANEL_POSTMATCH_ATTENDANCE_REQUIRED'), true);
   assert.equal(html.includes('Comunicaciones error'), true);
+});
+
+test('PANEL_UI_ALERTS_ASYNC_ROUTING_TEST', () => {
+  const ui = panelUiAsyncHarness();
+  ui.load('alerts');
+  const dashboardCall = ui.calls.find((call) => call.name === 'getPanelDashboard');
+  ui.succeed(dashboardCall, { pendingAbsences: 3, communications: { error: 2 }, sportAlerts: [{ code: 'LOW_PARTICIPATION_STREAK' }] });
+  assert.equal(ui.content.innerHTML.includes('alerts-view'), true);
+  assert.equal(ui.content.innerHTML.includes('LOW_PARTICIPATION_STREAK'), true);
+  assert.equal(ui.content.innerHTML.includes('Sesion actual/proxima'), false);
+});
+
+test('PANEL_UI_MATCH_REFRESH_NO_DASHBOARD_OVERRIDE_TEST', () => {
+  const ui = panelUiAsyncHarness();
+  ui.load('matches');
+  ui.succeed(ui.calls.at(-1), ui.state.referenceData);
+  ui.renderer.dispatch({ type: 'createMatch', payload: namedForm([{ name: 'RIVAL', value: 'Rival Nuevo' }, { name: 'FECHA', value: '2026-02-11' }]) });
+  ui.succeed(ui.calls.find((call) => call.name === 'commandCreateMatch'), { PARTIDO_ID: 'PAR-003' });
+  const referenceRefresh = ui.calls.filter((call) => call.name === 'getPanelReferenceData').at(-1);
+  ui.succeed(referenceRefresh, ui.state.referenceData);
+  const dashboardRefresh = ui.calls.filter((call) => call.name === 'getPanelDashboard').at(-1);
+  assert.equal(ui.content.innerHTML.includes('programmed-matches'), true);
+  ui.succeed(dashboardRefresh, { pendingAbsences: 9 });
+  assert.equal(ui.content.innerHTML.includes('programmed-matches'), true);
+  assert.equal(ui.content.innerHTML.includes('Sesion actual/proxima'), false);
+});
+
+test('PANEL_UI_CURRENT_VIEW_PRESERVED_TEST', () => {
+  const ui = panelUiAsyncHarness();
+  ui.load('matches');
+  ui.succeed(ui.calls.at(-1), ui.state.referenceData);
+  ui.load('alerts');
+  const dashboardCall = ui.calls.filter((call) => call.name === 'getPanelDashboard').at(-1);
+  ui.succeed(dashboardCall, { readinessIssues: [{ code: 'PANEL_POSTMATCH_ATTENDANCE_REQUIRED' }], communications: {} });
+  assert.equal(ui.currentView, 'alerts');
+  assert.equal(ui.content.innerHTML.includes('alerts-view'), true);
+});
+
+test('PANEL_CLIENT_POSTMATCH_SELECTION_STATE_TEST', () => {
+  const calls = [];
+  const state = {};
+  const controller = createPanelClientController({
+    callServer(name, args, onSuccess) {
+      calls.push({ name, args });
+      onSuccess({ ok: true, data: { rows: [] } });
+    },
+    state
+  });
+  controller.loadPostMatch('PAR-002');
+  assert.equal(state.selectedPlayedMatchId, 'PAR-002');
+  assert.deepEqual(calls[0], { name: 'getPanelParticipation', args: ['PAR-002'] });
+});
+
+test('PANEL_UI_POSTMATCH_DEFAULT_SELECTION_TEST', () => {
+  const ui = panelUiAsyncHarness();
+  ui.load('postmatch');
+  ui.succeed(ui.calls.at(-1), ui.state.referenceData);
+  assert.equal(ui.state.selectedPlayedMatchId, 'PAR-002');
+  assert.deepEqual(ui.calls.at(-1), { ...ui.calls.at(-1), name: 'getPanelParticipation', args: ['PAR-002'] });
+});
+
+test('PANEL_UI_POSTMATCH_SAVE_RELOAD_SAME_MATCH_TEST', () => {
+  const ui = panelUiAsyncHarness({ selectedPlayedMatchId: 'PAR-002' });
+  ui.renderer.dispatch({ type: 'saveParticipationFromElement', button: fakeParticipationButton(namedContainer([{ name: 'CONDICION_INICIAL', value: 'TITULAR' }]), { 'data-match-id': 'PAR-002', 'data-student-id': 'ALU-001' }) });
+  const saveCall = ui.calls.find((call) => call.name === 'commandSaveParticipation');
+  ui.succeed(saveCall, { ok: true });
+  assert.equal(ui.calls.at(-1).name, 'getPanelParticipation');
+  assert.deepEqual(ui.calls.at(-1).args, ['PAR-002']);
+});
+
+test('PANEL_UI_POSTMATCH_NO_EMPTY_MATCH_RPC_TEST', () => {
+  const ui = panelUiAsyncHarness({ referenceData: { playedMatches: [] } });
+  ui.controller.loadPostMatch('');
+  ui.renderer.dispatch({ type: 'selectPlayedMatch', matchId: '' });
+  ui.renderer.dispatch({ type: 'saveParticipation', studentId: 'ALU-001', payload: namedContainer([{ name: 'CONDICION_INICIAL', value: 'TITULAR' }]) });
+  assert.equal(ui.calls.some((call) => call.name === 'getPanelParticipation' && call.args[0] === ''), false);
+  assert.equal(ui.calls.some((call) => call.name === 'commandSaveParticipation'), false);
+});
+
+test('PANEL_UI_EXISTING_PROPOSAL_RESUME_TEST', () => {
+  const { calls, renderer } = panelRendererHarness({
+    referenceData: {
+      programmedMatches: [{ partidoId: 'PAR-001', rival: 'Rival', fecha: '2026-02-10' }],
+      convocationProposals: [{ CONVOCATORIA_ID: 'CON-PROP', PARTIDO_ID: 'PAR-001' }],
+      authoritativeConvocations: [],
+      runtimeCapabilities: { externalMailEnabled: false }
+    }
+  });
+  renderer.dispatch({ type: 'resolveConvocationForMatch', matchId: 'PAR-001' });
+  assert.deepEqual(calls.at(-1), { name: 'loadConvocation', args: ['CON-PROP'] });
+});
+
+test('PANEL_UI_EXISTING_AUTHORITATIVE_RESUME_TEST', () => {
+  const { calls, renderer } = panelRendererHarness({
+    referenceData: {
+      programmedMatches: [{ partidoId: 'PAR-001', rival: 'Rival', fecha: '2026-02-10' }],
+      convocationProposals: [{ CONVOCATORIA_ID: 'CON-PROP', PARTIDO_ID: 'PAR-001' }],
+      authoritativeConvocations: [{ CONVOCATORIA_ID: 'CON-AUTH', PARTIDO_ID: 'PAR-001' }],
+      runtimeCapabilities: { externalMailEnabled: false }
+    }
+  });
+  renderer.dispatch({ type: 'resolveConvocationForMatch', matchId: 'PAR-001' });
+  assert.deepEqual(calls.at(-1), { name: 'loadConvocation', args: ['CON-AUTH'] });
+});
+
+test('PANEL_UI_CONVOCATION_SWITCH_MATCH_LOAD_TEST', () => {
+  const { calls, renderer, state } = panelRendererHarness({
+    referenceData: {
+      programmedMatches: [{ partidoId: 'PAR-001', rival: 'Uno', fecha: '2026-02-10' }, { partidoId: 'PAR-002', rival: 'Dos', fecha: '2026-02-11' }],
+      convocationProposals: [{ CONVOCATORIA_ID: 'CON-002', PARTIDO_ID: 'PAR-002' }],
+      authoritativeConvocations: [],
+      runtimeCapabilities: { externalMailEnabled: false }
+    }
+  });
+  renderer.dispatch({ type: 'selectProgrammedMatch', matchId: 'PAR-002' });
+  assert.equal(state.selectedProgrammedMatchId, 'PAR-002');
+  assert.deepEqual(calls.at(-1), { name: 'loadConvocation', args: ['CON-002'] });
+});
+
+test('PANEL_UI_CONVOCATION_NO_DUPLICATE_GENERATE_TEST', () => {
+  const { calls, renderer } = panelRendererHarness({
+    referenceData: {
+      programmedMatches: [{ partidoId: 'PAR-001', rival: 'Rival', fecha: '2026-02-10' }],
+      convocationProposals: [{ CONVOCATORIA_ID: 'CON-PROP', PARTIDO_ID: 'PAR-001' }],
+      authoritativeConvocations: [],
+      runtimeCapabilities: { externalMailEnabled: false }
+    }
+  });
+  const html = renderer.renderConvocations();
+  assert.equal(html.includes('data-action="convocation-generate" data-match-id="PAR-001" disabled'), true);
+  renderer.dispatch({ type: 'generateConvocation', matchId: 'PAR-001' });
+  assert.equal(calls.some((call) => call.name === 'generateConvocation'), false);
+});
+
+test('PANEL_UI_CONVOCATION_REOPEN_WORKFLOW_TEST', () => {
+  const ui = panelUiAsyncHarness({
+    referenceData: {
+      programmedMatches: [{ partidoId: 'PAR-001', rival: 'Rival', competencia: 'A', fecha: '2026-02-10' }],
+      playedMatches: [],
+      convocationProposals: [{ CONVOCATORIA_ID: 'CON-001', PARTIDO_ID: 'PAR-001' }],
+      authoritativeConvocations: [],
+      runtimeCapabilities: { externalMailEnabled: false }
+    }
+  });
+  ui.load('convocations');
+  ui.succeed(ui.calls.at(-1), ui.state.referenceData);
+  assert.deepEqual(ui.calls.at(-1), { ...ui.calls.at(-1), name: 'getPanelConvocation', args: ['CON-001'] });
+});
+
+test('PANEL_UI_DASHBOARD_NEXT_MATCH_A_B_TEST', () => {
+  const { renderer } = panelRendererHarness({
+    dashboard: {
+      nextMatchA: { partidoId: 'PAR-A' },
+      nextMatchB: { partidoId: 'PAR-B' },
+      expiredAbsences: 2,
+      convocationProposals: [{ CONVOCATORIA_ID: 'CON-001' }],
+      convocationStatusByMatch: {}
+    }
+  });
+  const html = renderer.renderDashboard();
+  assert.equal(html.includes('Proximo A'), true);
+  assert.equal(html.includes('PAR-A'), true);
+  assert.equal(html.includes('Proximo B'), true);
+  assert.equal(html.includes('PAR-B'), true);
+  assert.equal(html.includes('Faltas vencidas'), true);
+  assert.equal(html.includes('Convocatorias pendientes'), true);
+});
+
+test('PANEL_UI_CONVOCATION_SNAPSHOT_FIELDS_TEST', () => {
+  const { renderer } = panelRendererHarness();
+  const html = renderer.renderConvocations();
+  ['posicionPrincipal', 'posicionSecundaria', 'posicionAsignada', 'ordenPrioridad', 'cambioManual', 'rotationException'].forEach((label) => {
+    assert.equal(html.includes(label), true, label);
+  });
+});
+
+test('PANEL_UI_POSTMATCH_CONDITION_SELECT_TEST', () => {
+  const { renderer } = panelRendererHarness();
+  const html = renderer.renderPostMatch();
+  assert.equal(html.includes('<select name="CONDICION_INICIAL">'), true);
+  assert.equal(html.includes('<option value="TITULAR" selected>TITULAR</option>'), true);
+  assert.equal(html.includes('<option value="SUPLENTE">SUPLENTE</option>'), true);
+});
+
+test('PANEL_CLIENT_UI_INTEGRATION_FLOW_TEST', () => {
+  const ui = panelUiAsyncHarness({
+    attendance: {
+      rows: [
+        { attendanceId: '', studentId: 'ALU-001', nombre: 'Alumno 1', estadoActual: '', capabilities: { canMarkAttendance: true } },
+        { attendanceId: 'AST-002', studentId: 'ALU-002', nombre: 'Alumno 2', estadoActual: 'F', capabilities: { canResolveAbsence: true } }
+      ]
+    },
+    convocation: {
+      convocationId: 'CON-001',
+      details: [{ ALUMNO_ID: 'ALU-001', nombre: 'Alumno 1', ELEGIBILITY_STATUS: 'ELIGIBLE', seleccionadoFinal: true, posicionPrincipal: 'DEF', posicionSecundaria: 'MED', posicionAsignada: 'DEF' }]
+    },
+    postMatch: {
+      rows: [{ ALUMNO_ID: 'ALU-001', nombre: 'Alumno 1', ASISTENCIA_ESTADO: 'A', ASISTIO_DERIVADO: true, CONDICION_INICIAL: 'TITULAR', MINUTOS_JUGADOS: 60 }],
+      readiness: { ready: true },
+      issues: []
+    }
+  });
+  ui.load('attendance');
+  ui.succeed(ui.calls.at(-1), ui.state.referenceData);
+  ui.succeed(ui.calls.at(-1), ui.state.attendance);
+  ui.renderer.dispatch({ type: 'attendanceSessionChange', sessionId: 'SES-001' });
+  ui.renderer.dispatch({ type: 'markAttendance', studentId: 'ALU-001', state: 'A' });
+  ui.renderer.dispatch({ type: 'resolveAbsence', attendanceId: 'AST-002', targetState: 'FJ', reason: 'motivo ficticio' });
+  ui.load('matches');
+  ui.succeed(ui.calls.at(-1), ui.state.referenceData);
+  ui.renderer.dispatch({ type: 'createMatch', payload: namedForm([{ name: 'RIVAL', value: 'Nuevo' }, { name: 'FECHA', value: '2026-02-12' }]) });
+  ui.renderer.dispatch({ type: 'updateMatch', matchId: 'PAR-001', payload: namedForm([{ name: 'SEDE', value: 'Cancha 2' }]) });
+  ui.renderer.dispatch({ type: 'markMatchPlayed', matchId: 'PAR-001', payload: namedForm([{ name: 'GOLES_FAVOR', value: '1' }, { name: 'GOLES_CONTRA', value: '0' }]) });
+  ui.renderer.dispatch({ type: 'cancelMatch', matchId: 'PAR-001' });
+  ui.load('convocations');
+  ui.succeed(ui.calls.filter((call) => call.name === 'getPanelReferenceData').at(-1), ui.state.referenceData);
+  ui.renderer.dispatch({ type: 'generateConvocation', matchId: 'PAR-001' });
+  ui.succeed(ui.calls.find((call) => call.name === 'commandGenerateConvocation'), { CONVOCATORIA_ID: 'CON-001', PARTIDO_ID: 'PAR-001' });
+  ui.renderer.dispatch({ type: 'setFinalSelection', convocationId: 'CON-001', studentId: 'ALU-001', selected: true, reason: 'motivo' });
+  ui.renderer.dispatch({ type: 'assignPosition', convocationId: 'CON-001', studentId: 'ALU-001', position: 'MED', reason: 'motivo' });
+  ui.renderer.dispatch({ type: 'approveConvocation', convocationId: 'CON-001' });
+  ui.renderer.dispatch({ type: 'prepareCommunications', convocationId: 'CON-001' });
+  ui.load('postmatch');
+  ui.succeed(ui.calls.filter((call) => call.name === 'getPanelReferenceData').at(-1), ui.state.referenceData);
+  assert.equal(ui.state.selectedPlayedMatchId, 'PAR-002');
+  ui.renderer.dispatch({ type: 'saveParticipationFromElement', button: fakeParticipationButton(namedContainer([{ name: 'CONDICION_INICIAL', value: 'TITULAR' }, { name: 'MINUTOS_JUGADOS', value: '60' }]), { 'data-match-id': 'PAR-002', 'data-student-id': 'ALU-001' }) });
+  ui.succeed(ui.calls.find((call) => call.name === 'commandSaveParticipation'), {});
+  assert.deepEqual(ui.calls.at(-1).args, ['PAR-002']);
+  ui.load('alerts');
+  ui.succeed(ui.calls.filter((call) => call.name === 'getPanelDashboard').at(-1), { sportAlerts: [{ code: 'LOW_PARTICIPATION_STREAK' }], communications: {} });
+  assert.equal(ui.content.innerHTML.includes('alerts-view'), true);
+  ui.succeed(ui.calls.filter((call) => call.name === 'getPanelDashboard').at(-1), { pendingAbsences: 1, communications: {} });
+  assert.equal(ui.content.innerHTML.includes('alerts-view'), true);
+
+  const names = ui.calls.map((call) => call.name);
+  ['getPanelReferenceData', 'getPanelAttendance', 'commandCreateAttendance', 'commandResolveAbsence', 'commandCreateMatch', 'commandUpdateMatch', 'commandMarkMatchPlayed', 'commandCancelMatch', 'commandGenerateConvocation', 'commandSetFinalSelection', 'commandAssignPosition', 'commandApproveConvocation', 'commandPrepareConvocationCommunications', 'getPanelParticipation', 'commandSaveParticipation', 'getPanelDashboard'].forEach((name) => {
+    assert.equal(names.includes(name), true, name);
+  });
+  assert.equal(ui.calls.some((call) => call.args && call.args.includes('')), false);
 });
 
 test('P14_UI_REQUIRES_BOUND_CONTAINER_TEST', () => {

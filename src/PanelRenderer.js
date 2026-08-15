@@ -32,7 +32,8 @@ function createPanelRenderer(dependencies) {
   }
 
   function field(name, type, value) {
-    return '<label>' + esc(name) + '<input name="' + esc(name) + '" type="' + esc(type || 'text') + '" value="' + esc(value || '') + '"></label>';
+    var current = value === undefined || value === null ? '' : value;
+    return '<label>' + esc(name) + '<input name="' + esc(name) + '" type="' + esc(type || 'text') + '" value="' + esc(current) + '"></label>';
   }
 
   function option(value, label, selected) {
@@ -49,11 +50,17 @@ function createPanelRenderer(dependencies) {
 
   function renderDashboard(data) {
     var dashboard = data || state.dashboard || {};
+    var proposalCount = (dashboard.convocationProposals || []).length;
+    var pendingCount = proposalCount + Object.keys(dashboard.convocationStatusByMatch || {}).length;
     return [
       card('Sesion actual/proxima', (dashboard.currentSession && dashboard.currentSession.sesionId) || (dashboard.nextSession && dashboard.nextSession.sesionId) || ''),
       card('Asistencias', ((dashboard.attendanceSummary || {}).captured || 0) + '/' + ((dashboard.attendanceSummary || {}).expected || 0)),
       card('Faltas pendientes', dashboard.pendingAbsences || 0),
+      card('Faltas vencidas', dashboard.expiredAbsences || 0),
       card('Proximo vencimiento', dashboard.nextAbsenceDeadline || ''),
+      card('Proximo A', (dashboard.nextMatchA && dashboard.nextMatchA.partidoId) || ''),
+      card('Proximo B', (dashboard.nextMatchB && dashboard.nextMatchB.partidoId) || ''),
+      card('Convocatorias pendientes', pendingCount),
       card('Comunicaciones', (((dashboard.communications || {}).pending) || 0) + ' pendientes'),
       card('Alertas', ((dashboard.sportAlerts || []).length + (dashboard.readinessIssues || []).length))
     ].join('');
@@ -114,12 +121,14 @@ function createPanelRenderer(dependencies) {
     var reference = state.referenceData || {};
     var selectedMatch = selectedProgrammedMatchId();
     var convocation = state.convocation || { details: [] };
+    var existing = findConvocationForMatch(selectedMatch, reference);
     var capabilities = reference.runtimeCapabilities || {};
     return [
       '<select id="convocation-match" data-action="convocation-match-change">',
       (reference.programmedMatches || []).map(function(match) { return option(match.partidoId, match.rival + ' - ' + match.fecha, match.partidoId === selectedMatch); }).join(''),
       '</select>',
-      '<button data-action="convocation-generate" data-match-id="' + esc(selectedMatch) + '">Generar propuesta</button>',
+      '<button data-action="convocation-generate" data-match-id="' + esc(selectedMatch) + '"' + (existing ? ' disabled' : '') + '>Generar propuesta</button>',
+      existing ? '<p class="muted">Propuesta existente</p>' : '<p class="muted">Sin propuesta</p>',
       renderConvocationDetails(convocation),
       '<button data-action="convocation-approve" data-convocation-id="' + esc(convocation.convocationId || '') + '">Aprobar convocatoria</button>',
       '<button data-action="communication-prepare" data-convocation-id="' + esc(convocation.convocationId || '') + '">Preparar comunicaciones</button>',
@@ -128,13 +137,14 @@ function createPanelRenderer(dependencies) {
   }
 
   function renderConvocationDetails(convocation) {
-    return '<table id="convocation-details"><tbody>' + ((convocation && convocation.details) || []).map(function(row) {
+    return '<table id="convocation-details"><thead><tr><th>Nombre</th><th>ELEGIBILITY_STATUS</th><th>MOTIVO_NO_ELEGIBLE</th><th>Nivel</th><th>posicionPrincipal</th><th>posicionSecundaria</th><th>posicionAsignada</th><th>rotacionAntes</th><th>prioridadRotacion</th><th>ordenPrioridad</th><th>puntajeAsistencia</th><th>presenciaReal</th><th>recomendadoSistema</th><th>cambioManual</th><th>rotationException</th><th>Seleccion</th><th>Asignar</th><th>Motivo</th></tr></thead><tbody>' + ((convocation && convocation.details) || []).map(function(row) {
       var disabled = row.ELEGIBILITY_STATUS === 'PENDING' || row.ELEGIBILITY_STATUS === 'INELIGIBLE';
       var positions = [row.posicionPrincipal, row.posicionSecundaria].filter(Boolean);
       return '<tr data-student-id="' + esc(row.ALUMNO_ID) + '">' +
         '<td>' + esc(row.nombre) + '</td><td>' + esc(row.ELEGIBILITY_STATUS) + '</td><td>' + esc(row.MOTIVO_NO_ELEGIBLE) + '</td>' +
-        '<td>' + esc(row.nivel) + '</td><td>' + esc(row.rotacionAntes) + '</td><td>' + esc(row.prioridadRotacion) + '</td>' +
-        '<td>' + esc(row.puntajeAsistencia) + '</td><td>' + esc(row.presenciaReal) + '</td><td>' + esc(row.recomendadoSistema) + '</td>' +
+        '<td>' + esc(row.nivel) + '</td><td>' + esc(row.posicionPrincipal) + '</td><td>' + esc(row.posicionSecundaria) + '</td><td>' + esc(row.posicionAsignada) + '</td>' +
+        '<td>' + esc(row.rotacionAntes) + '</td><td>' + esc(row.prioridadRotacion) + '</td><td>' + esc(row.ordenPrioridad) + '</td>' +
+        '<td>' + esc(row.puntajeAsistencia) + '</td><td>' + esc(row.presenciaReal) + '</td><td>' + esc(row.recomendadoSistema) + '</td><td>' + esc(row.cambioManual) + '</td><td>' + esc(row.rotationException) + '</td>' +
         '<td><input type="checkbox" data-action="convocation-selection" data-convocation-id="' + esc(convocation.convocationId) + '" data-student-id="' + esc(row.ALUMNO_ID) + '"' + (row.seleccionadoFinal ? ' checked' : '') + (disabled ? ' disabled' : '') + '></td>' +
         '<td><select data-action="convocation-position" data-convocation-id="' + esc(convocation.convocationId) + '" data-student-id="' + esc(row.ALUMNO_ID) + '"' + (disabled ? ' disabled' : '') + '>' + positions.map(function(position) { return option(position, position, position === row.posicionAsignada); }).join('') + '</select></td>' +
         '<td><input class="convocation-reason" data-student-id="' + esc(row.ALUMNO_ID) + '" aria-label="motivo obligatorio" placeholder="Motivo" value="' + esc(row.motivoCambio || '') + '"></td>' +
@@ -164,8 +174,10 @@ function createPanelRenderer(dependencies) {
         var blocked = issuesByStudent[row.ALUMNO_ID] === 'PANEL_POSTMATCH_ATTENDANCE_REQUIRED';
         return '<tr data-student-id="' + esc(row.ALUMNO_ID) + '">' +
           '<td>' + esc(row.nombre) + '</td><td class="readonly">' + esc(row.ASISTENCIA_ESTADO) + '</td><td class="readonly">' + esc(row.ASISTIO_DERIVADO) + '</td>' +
-          ['CONDICION_INICIAL', 'MINUTOS_JUGADOS', 'GOLES', 'AMARILLAS', 'ROJAS', 'CALIFICACION', 'OBSERVACIONES'].map(function(fieldName) {
-            return '<td><input name="' + esc(fieldName) + '" value="' + esc(row[fieldName] || '') + '"></td>';
+          '<td><select name="CONDICION_INICIAL">' + option('TITULAR', 'TITULAR', row.CONDICION_INICIAL === 'TITULAR') + option('SUPLENTE', 'SUPLENTE', row.CONDICION_INICIAL === 'SUPLENTE') + '</select></td>' +
+          ['MINUTOS_JUGADOS', 'GOLES', 'AMARILLAS', 'ROJAS', 'CALIFICACION', 'OBSERVACIONES'].map(function(fieldName) {
+            var value = row[fieldName] === undefined || row[fieldName] === null ? '' : row[fieldName];
+            return '<td><input name="' + esc(fieldName) + '" value="' + esc(value) + '"></td>';
           }).join('') +
           '<td><button data-action="participation-save" data-match-id="' + esc(selectedMatch) + '" data-student-id="' + esc(row.ALUMNO_ID) + '"' + (blocked ? ' disabled' : '') + '>Guardar</button></td>' +
           '</tr>';
@@ -196,16 +208,81 @@ function createPanelRenderer(dependencies) {
     return payload;
   }
 
-  function afterWrite(viewName) {
-    if (controller && typeof controller.loadReferenceData === 'function') {
-      controller.loadReferenceData();
+  function elementValue(element) {
+    if (!element) {
+      return '';
     }
-    if (controller && typeof controller.loadDashboard === 'function') {
-      controller.loadDashboard();
+    if (element.type === 'checkbox') {
+      return element.checked === true;
     }
-    if (viewName === 'postmatch' && controller && typeof controller.loadPostMatch === 'function') {
-      controller.loadPostMatch(selectedPlayedMatchId());
+    return element.value;
+  }
+
+  function namedElements(container) {
+    if (!container) {
+      return [];
     }
+    if (container.elements !== undefined) {
+      return Array.prototype.slice.call(container.elements);
+    }
+    if (typeof container.querySelectorAll === 'function') {
+      return Array.prototype.slice.call(container.querySelectorAll('[name]'));
+    }
+    if (typeof container === 'object') {
+      return Object.keys(container).map(function(name) {
+        return { name: name, value: container[name] };
+      });
+    }
+    return [];
+  }
+
+  function elementPayload(container) {
+    var payload = {};
+    namedElements(container).forEach(function(element) {
+      if (element && element.name) {
+        payload[element.name] = elementValue(element);
+      }
+    });
+    return payload;
+  }
+
+  function rowFromButton(button) {
+    return button && button.parentNode && button.parentNode.parentNode;
+  }
+
+  function convocationMatchId(convocation) {
+    return convocation && (convocation.PARTIDO_ID || convocation.partidoId || convocation.matchId);
+  }
+
+  function convocationId(convocation) {
+    return convocation && (convocation.CONVOCATORIA_ID || convocation.convocationId);
+  }
+
+  function byConvocationId(left, right) {
+    return String(convocationId(left) || '').localeCompare(String(convocationId(right) || ''));
+  }
+
+  function findConvocationForMatch(matchId, referenceData) {
+    var reference = referenceData || {};
+    var authoritative = (reference.authoritativeConvocations || [])
+      .filter(function(convocation) { return convocationMatchId(convocation) === matchId; })
+      .sort(byConvocationId);
+    if (authoritative[0]) {
+      return authoritative[0];
+    }
+    return ((reference.convocationProposals || [])
+      .filter(function(convocation) { return convocationMatchId(convocation) === matchId; })
+      .sort(byConvocationId))[0] || null;
+  }
+
+  function resolveConvocationForMatch(matchId) {
+    state.selectedProgrammedMatchId = matchId || selectedProgrammedMatchId();
+    var existing = findConvocationForMatch(state.selectedProgrammedMatchId, state.referenceData || {});
+    if (existing && convocationId(existing)) {
+      return controller.loadConvocation(convocationId(existing));
+    }
+    state.convocation = { convocationId: '', details: [] };
+    return render('convocations');
   }
 
   function dispatch(action) {
@@ -228,23 +305,26 @@ function createPanelRenderer(dependencies) {
       return controller.resolveAbsence(action.attendanceId, action.targetState, action.reason || '');
     }
     if (action.type === 'createMatch') {
-      return controller.createMatch(formPayload(action.payload, ['COMPETENCIA', 'JORNADA', 'RIVAL', 'FECHA', 'HORA_CITACION', 'HORA_PARTIDO', 'SEDE', 'LOCAL_VISITANTE', 'DURACION_MINUTOS', 'UNIFORME', 'INDICACIONES', 'OBSERVACIONES']));
+      return controller.createMatch(formPayload(elementPayload(action.payload), ['COMPETENCIA', 'JORNADA', 'RIVAL', 'FECHA', 'HORA_CITACION', 'HORA_PARTIDO', 'SEDE', 'LOCAL_VISITANTE', 'DURACION_MINUTOS', 'UNIFORME', 'INDICACIONES', 'OBSERVACIONES']));
     }
     if (action.type === 'updateMatch') {
-      return controller.updateMatch(action.matchId, formPayload(action.payload, ['COMPETENCIA', 'JORNADA', 'RIVAL', 'FECHA', 'HORA_CITACION', 'HORA_PARTIDO', 'SEDE', 'LOCAL_VISITANTE', 'DURACION_MINUTOS', 'UNIFORME', 'INDICACIONES', 'OBSERVACIONES']));
+      return controller.updateMatch(action.matchId, formPayload(elementPayload(action.payload), ['COMPETENCIA', 'JORNADA', 'RIVAL', 'FECHA', 'HORA_CITACION', 'HORA_PARTIDO', 'SEDE', 'LOCAL_VISITANTE', 'DURACION_MINUTOS', 'UNIFORME', 'INDICACIONES', 'OBSERVACIONES']));
     }
     if (action.type === 'markMatchPlayed') {
-      return controller.markMatchPlayed(action.matchId, formPayload(action.payload, ['GOLES_FAVOR', 'GOLES_CONTRA']));
+      return controller.markMatchPlayed(action.matchId, formPayload(elementPayload(action.payload), ['GOLES_FAVOR', 'GOLES_CONTRA']));
     }
     if (action.type === 'cancelMatch') {
       return controller.cancelMatch(action.matchId);
     }
     if (action.type === 'selectProgrammedMatch') {
-      state.selectedProgrammedMatchId = action.matchId;
-      return action.matchId;
+      return resolveConvocationForMatch(action.matchId);
     }
     if (action.type === 'generateConvocation') {
-      return controller.generateConvocation(action.matchId || selectedProgrammedMatchId());
+      var matchId = action.matchId || selectedProgrammedMatchId();
+      if (findConvocationForMatch(matchId, state.referenceData || {})) {
+        return null;
+      }
+      return controller.generateConvocation(matchId);
     }
     if (action.type === 'loadConvocation') {
       return controller.loadConvocation(action.convocationId);
@@ -265,11 +345,29 @@ function createPanelRenderer(dependencies) {
       return controller.sendPendingCommunications();
     }
     if (action.type === 'selectPlayedMatch') {
+      if (!action.matchId) {
+        return null;
+      }
       state.selectedPlayedMatchId = action.matchId;
       return controller.loadPostMatch(action.matchId);
     }
     if (action.type === 'saveParticipation') {
-      return controller.saveParticipation(action.matchId || selectedPlayedMatchId(), action.studentId, formPayload(action.payload, ['CONDICION_INICIAL', 'MINUTOS_JUGADOS', 'GOLES', 'AMARILLAS', 'ROJAS', 'CALIFICACION', 'OBSERVACIONES']));
+      var saveMatchId = action.matchId || selectedPlayedMatchId();
+      if (!saveMatchId) {
+        return null;
+      }
+      return controller.saveParticipation(saveMatchId, action.studentId, formPayload(elementPayload(action.payload), ['CONDICION_INICIAL', 'MINUTOS_JUGADOS', 'GOLES', 'AMARILLAS', 'ROJAS', 'CALIFICACION', 'OBSERVACIONES']));
+    }
+    if (action.type === 'saveParticipationFromElement') {
+      return dispatch({
+        type: 'saveParticipation',
+        matchId: action.button && action.button.getAttribute ? action.button.getAttribute('data-match-id') : '',
+        studentId: action.button && action.button.getAttribute ? action.button.getAttribute('data-student-id') : '',
+        payload: rowFromButton(action.button)
+      });
+    }
+    if (action.type === 'resolveConvocationForMatch') {
+      return resolveConvocationForMatch(action.matchId);
     }
     return null;
   }
@@ -298,6 +396,8 @@ function createPanelRenderer(dependencies) {
 
   return {
     dispatch: dispatch,
+    elementPayload: elementPayload,
+    findConvocationForMatch: findConvocationForMatch,
     formPayload: formPayload,
     render: render,
     renderAlerts: renderAlerts,
