@@ -49,9 +49,15 @@ function createCommunicationService(dependencies) {
   }
 
   function existingCommunication(tipo, referenceId, studentId, tutorId) {
-    return communicationRepository.getAll().filter(function(record) {
+    var matches = communicationRepository.getAll().filter(function(record) {
       return record.TIPO === tipo && record.REFERENCIA_ID === referenceId && record.ALUMNO_ID === studentId && record.TUTOR_ID === tutorId;
-    })[0] || null;
+    });
+
+    if (matches.length > 1) {
+      throw utils.createDomainError('COMMUNICATION_DUPLICATE_LOGICAL_KEY', [tipo, referenceId, studentId, tutorId].join('|'));
+    }
+
+    return matches[0] || null;
   }
 
   function assertUniqueCommunicationId(id) {
@@ -68,20 +74,31 @@ function createCommunicationService(dependencies) {
   }
 
   function normalizeCommunication(record) {
+    var recipient = utils.normalizeEmail(record.DESTINATARIO);
+    var attempts = Number(record.INTENTOS || 0);
+
+    if (!utils.isValidEmail(recipient)) {
+      throw utils.createDomainError('COMMUNICATION_RECIPIENT_INVALID', 'DESTINATARIO');
+    }
+
+    if (!Number.isInteger(attempts) || attempts < 0) {
+      throw utils.createDomainError('COMMUNICATION_ATTEMPTS_INVALID', 'INTENTOS');
+    }
+
     return {
       COMUNICACION_ID: utils.requireText(record.COMUNICACION_ID, 'COMUNICACION_ID'),
       TIPO: utils.assertOneOf(record.TIPO, COMMUNICATION_ENUMS.TIPO, 'TIPO'),
       ALUMNO_ID: utils.requireText(record.ALUMNO_ID, 'ALUMNO_ID'),
       TUTOR_ID: utils.requireText(record.TUTOR_ID, 'TUTOR_ID'),
       REFERENCIA_ID: utils.requireText(record.REFERENCIA_ID, 'REFERENCIA_ID'),
-      DESTINATARIO: utils.normalizeEmail(record.DESTINATARIO),
+      DESTINATARIO: recipient,
       ASUNTO: utils.requireText(record.ASUNTO, 'ASUNTO'),
       CUERPO: utils.requireText(record.CUERPO, 'CUERPO'),
       CREADO_EN: record.CREADO_EN || clock.now(),
       ENVIADO_EN: record.ENVIADO_EN || '',
       ESTADO: utils.assertOneOf(record.ESTADO, COMMUNICATION_ENUMS.ESTADO, 'ESTADO'),
       ERROR: utils.optionalText(record.ERROR),
-      INTENTOS: Number(record.INTENTOS || 0)
+      INTENTOS: attempts
     };
   }
 
@@ -230,18 +247,28 @@ function createCommunicationService(dependencies) {
 
   function sendCommunication(record) {
     var next = copyRecord(record);
+    var attempt = copyRecord(record);
 
     if (!canSendByConfig(record)) {
       return { ok: true, skipped: true, communication: next };
     }
+
+    attempt.ESTADO = 'ERROR';
+    attempt.ERROR = 'DELIVERY_ATTEMPT_IN_PROGRESS';
+    attempt.INTENTOS = Number(record.INTENTOS || 0) + 1;
+    communicationRepository.updateById('COMUNICACION_ID', record.COMUNICACION_ID, normalizeCommunication(attempt));
 
     try {
       mailAdapter.send({ to: record.DESTINATARIO, subject: record.ASUNTO, body: record.CUERPO });
       next.ESTADO = 'ENVIADO';
       next.ENVIADO_EN = clock.now();
       next.ERROR = '';
-      next.INTENTOS = Number(record.INTENTOS || 0) + 1;
-      communicationRepository.updateById('COMUNICACION_ID', record.COMUNICACION_ID, next);
+      next.INTENTOS = attempt.INTENTOS;
+      try {
+        communicationRepository.updateById('COMUNICACION_ID', record.COMUNICACION_ID, normalizeCommunication(next));
+      } catch (persistError) {
+        throw utils.createDomainError('COMMUNICATION_DELIVERY_STATE_UNCERTAIN', record.COMUNICACION_ID);
+      }
       try {
         markAbsenceSummaryPointer(next);
       } catch (pointerError) {
@@ -249,17 +276,20 @@ function createCommunicationService(dependencies) {
       }
       return { ok: true, communication: next };
     } catch (error) {
+      if (String(error && error.message ? error.message : error).indexOf('COMMUNICATION_DELIVERY_STATE_UNCERTAIN') !== -1) {
+        throw error;
+      }
       next.ESTADO = 'ERROR';
       next.ERROR = sanitizeError(error);
-      next.INTENTOS = Number(record.INTENTOS || 0) + 1;
-      communicationRepository.updateById('COMUNICACION_ID', record.COMUNICACION_ID, next);
+      next.INTENTOS = attempt.INTENTOS;
+      communicationRepository.updateById('COMUNICACION_ID', record.COMUNICACION_ID, normalizeCommunication(next));
       return { ok: false, communication: next };
     }
   }
 
   function sendPendingCommunications() {
     var results = [];
-    communicationRepository.getAll().filter(function(record) {
+    getCommunications().filter(function(record) {
       return record.ESTADO === 'PENDIENTE';
     }).forEach(function(record) {
       results.push(sendCommunication(record));
@@ -280,18 +310,34 @@ function createCommunicationService(dependencies) {
       throw utils.createDomainError('COMMUNICATION_RETRY_INVALID_STATE', communicationId);
     }
 
+    if (record.ERROR === 'DELIVERY_ATTEMPT_IN_PROGRESS') {
+      throw utils.createDomainError('COMMUNICATION_DELIVERY_STATE_UNCERTAIN', communicationId);
+    }
+
+    if (!canSendByConfig(record)) {
+      return { ok: true, skipped: true, communication: copyRecord(record) };
+    }
+
     record = copyRecord(record);
-    record.ESTADO = 'PENDIENTE';
     return sendCommunication(record);
   }
 
   function getCommunications() {
     var seen = {};
+    var seenLogical = {};
     return communicationRepository.getAll().map(normalizeCommunication).map(function(record) {
+      var logicalKey = [record.TIPO, record.REFERENCIA_ID, record.ALUMNO_ID, record.TUTOR_ID].join('|');
+
       if (seen[record.COMUNICACION_ID]) {
         throw utils.createDomainError('COMMUNICATION_DUPLICATE_ID', record.COMUNICACION_ID);
       }
       seen[record.COMUNICACION_ID] = true;
+
+      if (seenLogical[logicalKey]) {
+        throw utils.createDomainError('COMMUNICATION_DUPLICATE_LOGICAL_KEY', logicalKey);
+      }
+      seenLogical[logicalKey] = true;
+
       return record;
     });
   }

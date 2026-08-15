@@ -100,6 +100,7 @@ function service(options = {}) {
   const attendanceRepository = createArrayRepository(options.attendances || [attendance()]);
   return {
     attendanceRepository,
+    communicationRows,
     service: createCommunicationService({
       attendanceRepository,
       clock: { now: () => new Date('2026-02-01T12:00:00Z') },
@@ -263,4 +264,84 @@ test('APPS_SCRIPT_MAIL_ADAPTER_LAZY_TEST does not call provider during construct
 test('APPS_SCRIPT_MAIL_ADAPTER_PROVIDER_REQUIRED_TEST fails only when send is attempted', () => {
   const adapter = createAppsScriptMailAdapter(null);
   assert.throws(() => adapter.send({ to: 'family@example.invalid', subject: 'Test', body: 'Body' }), /MAIL_PROVIDER_REQUIRED/);
+});
+
+test('COMMUNICATION_STATE_PERSISTENCE_FAILURE_NO_RESEND_TEST blocks auto resend after delivered state cannot persist', () => {
+  let sent = 0;
+  const rows = [communication()];
+  const communicationRepository = {
+    getAll() { return rows; },
+    updateById(idField, id, nextRecord) {
+      if (nextRecord.ESTADO === 'ENVIADO') {
+        throw new Error('persist failed');
+      }
+      rows[0] = nextRecord;
+      return nextRecord;
+    }
+  };
+  const svc = createCommunicationService({
+    attendanceRepository: createArrayRepository([attendance()]),
+    clock: { now: () => new Date('2026-02-01T12:00:00Z') },
+    communicationRepository,
+    configService: config(),
+    convocationRepository: createArrayRepository([convocation()]),
+    detailRepository: createArrayRepository([detail()]),
+    mailAdapter: { send() { sent += 1; } },
+    matchService: createMatchService({ matchRepository: createArrayRepository([match()]), utils }),
+    studentRepository: createArrayRepository([student()]),
+    tutorRepository: createArrayRepository([tutor()]),
+    utils
+  });
+  assert.throws(() => svc.sendPendingCommunications(), /COMMUNICATION_DELIVERY_STATE_UNCERTAIN/);
+  assert.equal(rows[0].ERROR, 'DELIVERY_ATTEMPT_IN_PROGRESS');
+  assert.equal(svc.sendPendingCommunications().length, 0);
+  assert.equal(sent, 1);
+});
+
+test('COMMUNICATION_PRE_SEND_WRITE_FAILURE_NO_MAIL_TEST does not call provider if attempt marker fails', () => {
+  let sent = 0;
+  const communicationRepository = {
+    getAll() { return [communication()]; },
+    updateById() { throw new Error('pre write failed'); }
+  };
+  const svc = createCommunicationService({
+    attendanceRepository: createArrayRepository([attendance()]),
+    clock: { now: () => new Date('2026-02-01T12:00:00Z') },
+    communicationRepository,
+    configService: config(),
+    convocationRepository: createArrayRepository([convocation()]),
+    detailRepository: createArrayRepository([detail()]),
+    mailAdapter: { send() { sent += 1; } },
+    matchService: createMatchService({ matchRepository: createArrayRepository([match()]), utils }),
+    studentRepository: createArrayRepository([student()]),
+    tutorRepository: createArrayRepository([tutor()]),
+    utils
+  });
+  assert.throws(() => svc.sendPendingCommunications(), /pre write failed/);
+  assert.equal(sent, 0);
+});
+
+test('COMMUNICATION_UNCERTAIN_RETRY_BLOCKED_TEST rejects retry of uncertain delivery marker', () => {
+  const state = service({ communications: [communication({ ESTADO: 'ERROR', ERROR: 'DELIVERY_ATTEMPT_IN_PROGRESS', INTENTOS: 1 })] });
+  assert.throws(() => state.service.retryCommunication('COM-001'), /COMMUNICATION_DELIVERY_STATE_UNCERTAIN/);
+});
+
+test('COMMUNICATION_CONFIG_DISABLED_RETRY_STATE_TEST skips retry without mutating error row', () => {
+  const state = service({ communications: [communication({ ESTADO: 'ERROR', ERROR: 'provider failed', INTENTOS: 1 })], config: { AVISO_AUSENCIA_EMAIL: 'NO' } });
+  const result = state.service.retryCommunication('COM-001');
+  assert.equal(result.skipped, true);
+  assert.equal(state.communicationRows[0].ESTADO, 'ERROR');
+  assert.equal(state.communicationRows[0].ERROR, 'provider failed');
+});
+
+test('COMMUNICATION_DUPLICATE_LOGICAL_KEY_TEST rejects duplicate logical communication keys', () => {
+  assert.throws(() => service({ communications: [communication(), communication({ COMUNICACION_ID: 'COM-002' })] }).service.getCommunications(), /COMMUNICATION_DUPLICATE_LOGICAL_KEY/);
+});
+
+test('COMMUNICATION_RECIPIENT_VALIDATION_TEST rejects invalid recipient', () => {
+  assert.throws(() => service({ communications: [communication({ DESTINATARIO: 'not-email' })] }).service.getCommunications(), /COMMUNICATION_RECIPIENT_INVALID/);
+});
+
+test('COMMUNICATION_ATTEMPTS_INTEGRITY_TEST rejects invalid attempts', () => {
+  assert.throws(() => service({ communications: [communication({ INTENTOS: -1 })] }).service.getCommunications(), /COMMUNICATION_ATTEMPTS_INVALID/);
 });
