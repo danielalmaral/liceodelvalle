@@ -100,7 +100,15 @@ function createAppClientController(dependencies) {
 
   function rpc(name, args, onSuccess, options) {
     options = options || {};
+    var settled = false;
+    function settle() {
+      if (!settled && typeof options.onSettled === 'function') {
+        settled = true;
+        options.onSettled();
+      }
+    }
     return callServer(name, args || [], function(response) {
+      settle();
       if (!response || response.ok === false) {
         onFailure(response, options);
         return;
@@ -115,7 +123,10 @@ function createAppClientController(dependencies) {
       if (typeof onSuccess === 'function') {
         onSuccess(response.data);
       }
-    }, function(error) { onFailure(error, options); });
+    }, function(error) {
+      settle();
+      onFailure(error, options);
+    });
   }
 
   function hydrateRoute(route, token) {
@@ -195,6 +206,34 @@ function createAppClientController(dependencies) {
     });
   }
 
+  function selectAttendanceSession(sessionId) {
+    var token = nextEpoch('attendance');
+    var selected = validSessionId(sessionId) || '';
+    state.selectedSessionId = selected;
+    state.loading = true;
+    state.attendance = { sessionId: selected, rows: [] };
+    if (typeof render.route === 'function') {
+      render.route('attendance');
+    }
+    if (!selected) {
+      state.loading = false;
+      if (typeof render.route === 'function') render.route('attendance');
+      return null;
+    }
+    return rpc('getPanelAttendance', [selected], function(data) {
+      state.attendance = data || { sessionId: selected, rows: [] };
+      state.loading = false;
+      if (typeof render.route === 'function') {
+        render.route('attendance');
+      }
+      if (typeof render.feedback === 'function') {
+        render.feedback('');
+      }
+    }, {
+      isCurrent: function() { return isFresh(token, 'attendance') && state.selectedSessionId === selected; }
+    });
+  }
+
   function hydrateConvocations(token) {
     var selectedMatch = validMatchId(state.selectedProgrammedMatchId) || defaultMatchId();
     var existing;
@@ -228,9 +267,9 @@ function createAppClientController(dependencies) {
       }
       return null;
     }
-    state.selectedConvocationId = convocationIdValue;
     return rpc('getPanelConvocation', [convocationIdValue], function(data) {
       state.convocation = data || { convocationId: '', details: [] };
+      state.selectedConvocationId = convocationIdValue;
       state.loading = false;
       if (typeof render.route === 'function') {
         render.route('convocations');
@@ -238,8 +277,7 @@ function createAppClientController(dependencies) {
     }, {
       isCurrent: function() {
         return isFresh(token, 'convocations') &&
-          state.selectedProgrammedMatchId === expectedMatchId &&
-          state.selectedConvocationId === convocationIdValue;
+          state.selectedProgrammedMatchId === expectedMatchId;
       }
     });
   }
@@ -250,17 +288,18 @@ function createAppClientController(dependencies) {
     var existing;
     state.selectedProgrammedMatchId = selected;
     state.loading = true;
+    state.selectedConvocationId = '';
+    state.convocation = { convocationId: '', details: [] };
+    if (typeof render.route === 'function') {
+      render.route('convocations');
+    }
     if (!selected) {
-      state.selectedConvocationId = '';
-      state.convocation = { convocationId: '', details: [] };
       state.loading = false;
       if (typeof render.route === 'function') render.route('convocations');
       return null;
     }
     existing = findConvocationForMatch(selected);
     if (!existing || !convocationId(existing)) {
-      state.selectedConvocationId = '';
-      state.convocation = { convocationId: '', details: [] };
       state.loading = false;
       if (typeof render.route === 'function') render.route('convocations');
       return null;
@@ -315,25 +354,39 @@ function createAppClientController(dependencies) {
   }
 
   function generateConvocation(matchId) {
+    var originRoute = state.activeRoute;
+    var originMatchId = validMatchId(matchId) || matchId;
+    var token = state.requestEpoch;
     if (state.convocationGeneratePending) {
       return null;
     }
-    if (findConvocationForMatch(matchId)) {
+    if (findConvocationForMatch(originMatchId)) {
       return null;
     }
+    state.selectedProgrammedMatchId = originMatchId;
     state.convocationGeneratePending = true;
     if (typeof render.route === 'function') {
       render.route('convocations');
     }
-    return rpc('commandGenerateConvocation', [matchId], function(data) {
+    return rpc('commandGenerateConvocation', [originMatchId], function(data) {
       var newId = convocationId(data);
-      state.convocationGeneratePending = false;
+      if (state.activeRoute !== 'convocations' || state.selectedProgrammedMatchId !== originMatchId || state.requestEpoch !== token) {
+        return;
+      }
       if (newId) {
         state.selectedConvocationId = newId;
       }
       loadBootstrap('convocations');
     }, {
-      clearGeneratePending: true
+      isCurrent: function() {
+        return state.activeRoute === 'convocations' &&
+          state.selectedProgrammedMatchId === originMatchId &&
+          state.requestEpoch === token &&
+          originRoute === 'convocations';
+      },
+      onSettled: function() {
+        state.convocationGeneratePending = false;
+      }
     });
   }
 
@@ -388,6 +441,7 @@ function createAppClientController(dependencies) {
     prepareConvocationCommunications: prepareConvocationCommunications,
     resolveAbsence: resolveAbsence,
     route: route,
+    selectAttendanceSession: selectAttendanceSession,
     selectProgrammedMatch: selectProgrammedMatch,
     sendPendingCommunications: sendPendingCommunications,
     setCompetition: setCompetition,

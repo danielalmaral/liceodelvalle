@@ -39,6 +39,17 @@
 | KPI de convocatoria invariantes ante filtros | IMPLEMENTED |
 | Cobertura de posiciones invariante ante filtros | IMPLEMENTED |
 
+## Corrective 03 Audit Closure
+
+| Hallazgo | Estado |
+| --- | --- |
+| Cambio a convocatoria existente retira estado anterior en vuelo | IMPLEMENTED |
+| Renderer bloquea convocatorias inconsistentes con partido seleccionado | IMPLEMENTED |
+| Cambio de sesion de asistencia retira filas anteriores en vuelo | IMPLEMENTED |
+| Renderer bloquea asistencias inconsistentes con sesion seleccionada | IMPLEMENTED |
+| Generate no secuestra ruta tras cambio de pantalla | IMPLEMENTED |
+| Pending de generate se libera en success y failure | IMPLEMENTED |
+
 ## Deferred
 
 - `BRAND_OFFICIAL_LOGO_ASSET_PENDING`

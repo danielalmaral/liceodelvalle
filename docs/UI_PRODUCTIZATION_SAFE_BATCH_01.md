@@ -59,3 +59,9 @@ Los filtros de Convocatorias usan `state.convocationFilters` y atributos `data-c
 El segundo correctivo cierra consistencia de seleccion y fallos obsoletos. El cambio de partido programado queda bajo autoridad del controller con `selectProgrammedMatch(matchId)`, limpiando convocatoria anterior cuando el nuevo partido no tiene propuesta y cargando la convocatoria exacta cuando existe.
 
 El selector global de competencia queda bajo `setCompetition(value)`, con valores permitidos `ALL`, `A` y `B`; al cambiar rehidrata la ruta activa y descarta selecciones incompatibles. Los fallos stale de bootstrap, asistencia y convocatoria se ignoran simetricamente a los successes stale, y los KPI de convocatoria se calculan desde la convocatoria completa, no desde la tabla filtrada.
+
+## Corrective 03
+
+El tercer correctivo cierra carreras de transicion UI sin ampliar producto. El cambio humano de partido limpia inmediatamente la convocatoria anterior antes de solicitar la nueva, y el renderer bloquea detalles y acciones cuando la convocatoria cargada no corresponde al partido seleccionado.
+
+El cambio humano de sesion de asistencia queda bajo `selectAttendanceSession(sessionId)`, que limpia filas anteriores durante el RPC y evita acciones sobre alumnos de otra sesion. La respuesta de `generateConvocation(matchId)` libera siempre el pending del intento, pero solo rehidrata Convocatorias o muestra errores si el usuario sigue en la misma ruta y partido.

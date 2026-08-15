@@ -146,8 +146,11 @@ function createAppRenderer(dependencies) {
 
   function renderAttendance() {
     var view = state.attendance || { rows: [] };
-    var session = view.session || {};
-    var rows = view.rows || [];
+    var selected = selectedSessionId();
+    var viewSessionId = view.sessionId || (view.session && view.session.sesionId) || '';
+    var consistent = !viewSessionId || !selected || viewSessionId === selected;
+    var session = consistent ? (view.session || {}) : {};
+    var rows = consistent ? (view.rows || []) : [];
     var registered = rows.filter(function(row) { return row.estadoActual; }).length;
     var pending = rows.filter(function(row) { return !row.estadoActual; }).length;
     var pendingAbsence = rows.filter(function(row) { return row.pendienteJustificar; }).length;
@@ -232,7 +235,11 @@ function createAppRenderer(dependencies) {
     var existing = activeConvocationRecord();
     var status = (existing && existing.ESTADO) || 'SIN_PROPUESTA';
     var convocation = state.convocation || { details: [] };
-    var allDetails = convocation.details || [];
+    var canonicalConvocationId = convocationId(existing) || '';
+    var loadedConvocationId = convocation.convocationId || '';
+    var consistent = !canonicalConvocationId || !loadedConvocationId || canonicalConvocationId === loadedConvocationId;
+    var activeConvocationId = consistent && loadedConvocationId ? loadedConvocationId : '';
+    var allDetails = consistent && activeConvocationId ? (convocation.details || []) : [];
     var details = filteredConvocationDetails(allDetails);
     var selected = allDetails.filter(function(row) { return row.seleccionadoFinal === true; });
     var target = existing && existing.TOTAL_OBJETIVO !== undefined ? existing.TOTAL_OBJETIVO : valueOrDash(existing && existing.totalObjetivo);
@@ -247,7 +254,7 @@ function createAppRenderer(dependencies) {
       kpi('Cobertura de posiciones', positionCoverage(allDetails, existing), 'snapshots') +
       kpi('Convocatoria', selected.length + ' / ' + valueOrDash(target), 'seleccionados') +
       '</div>' + renderStepper(status) +
-      '<div class="convocation-layout"><main class="convocation-main">' + renderConvocationFilters() + renderConvocationTable(details, convocation.convocationId || convocationId(existing)) + '</main><aside class="side-panel">' + renderMatchSummary(match) + renderConvocationActions(convocation.convocationId || convocationId(existing)) + '</aside></div></section>';
+      '<div class="convocation-layout"><main class="convocation-main">' + renderConvocationFilters() + renderConvocationTable(details, activeConvocationId) + '</main><aside class="side-panel">' + renderMatchSummary(match) + renderConvocationActions(activeConvocationId) + '</aside></div></section>';
   }
 
   function renderMatchSelector() {
@@ -433,7 +440,7 @@ function createAppRenderer(dependencies) {
       if (element.id === 'app-competition') {
         controllerMethod('setCompetition')(element.value);
       }
-      if (element.id === 'app-attendance-session') controller.loadAttendance(element.value);
+      if (element.id === 'app-attendance-session') controllerMethod('selectAttendanceSession')(element.value);
       if (element.id === 'app-convocation-match') {
         controllerMethod('selectProgrammedMatch')(element.value);
       }
