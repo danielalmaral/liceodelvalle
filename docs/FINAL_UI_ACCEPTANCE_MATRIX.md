@@ -2,15 +2,15 @@
 
 | Modulo | Estado |
 | --- | --- |
-| Panel Principal | IMPLEMENTED |
-| Alumnos | IMPLEMENTED |
-| Asistencias | IMPLEMENTED |
-| Convocatorias | IMPLEMENTED |
-| Partidos | IMPLEMENTED |
-| Post Partido | IMPLEMENTED |
-| Reportes | IMPLEMENTED |
-| Comunicaciones | IMPLEMENTED |
-| Configuracion | IMPLEMENTED_READ_ONLY |
+| Panel Principal | PASS |
+| Alumnos | PASS |
+| Asistencias | PASS |
+| Convocatorias | PASS |
+| Partidos | PASS |
+| Post Partido | PASS |
+| Reportes | PASS |
+| Comunicaciones | PASS |
+| Configuracion | PASS_READ_ONLY |
 
 ## Corrective 01 Audit Closure
 
