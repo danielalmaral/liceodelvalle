@@ -60,4 +60,16 @@ P4 sólo prepara intents de aviso de ausencia. La persistencia de `COMUNICACIONE
 
 `CONVOCATORIA_DETALLE` guarda una fila por alumno evaluado del pool: elegibilidad, FI fuente, snapshots deportivos, rotación antes/después, recomendación del sistema, selección final, cambios manuales y posición asignada.
 
-`PARTICIPACION_PARTIDO`, `COMUNICACIONES` persistidas, `BITACORA` real y `PANEL` permanecen diferidos.
+## PARTICIPACION_PARTIDO
+
+`PARTICIPACION_PARTIDO` registra una fila por `PARTIDO_ID + ALUMNO_ID` convocado finalmente. Usa `PARTICIPACION_ID` estable, snapshots operativos de asistencia, minutos, goles, tarjetas, calificación y observaciones. La asistencia sigue viviendo en `ASISTENCIAS`.
+
+## COMUNICACIONES
+
+`COMUNICACIONES` persiste mensajes individuales por tutor. La relación canónica es `TIPO + REFERENCIA_ID + ALUMNO_ID + TUTOR_ID`; `ASISTENCIAS.COMUNICACION_ID` queda como puntero resumen legacy del piloto.
+
+## BITACORA
+
+`BITACORA` registra eventos append-only de cambios autoritativos mediante `EVENTO_ID` estable. No duplica contenido sensible de mensajes ni datos de contacto.
+
+`PANEL` permanece diferido.

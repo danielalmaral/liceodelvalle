@@ -54,6 +54,10 @@ function setupConfigSheet(spreadsheet) {
   return { created: false, headersWritten: false };
 }
 
+if (typeof globalThis !== 'undefined') {
+  globalThis.CONFIG_HEADERS = CONFIG_HEADERS;
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {
     CONFIG_HEADERS,

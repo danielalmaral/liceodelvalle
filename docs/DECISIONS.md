@@ -51,3 +51,19 @@ La deuda de rotación se calcula por alumno y competencia usando únicamente con
 ## ADR-013: Convocatoria Con Aprobacion Humana
 
 El motor puede recomendar una propuesta determinista, pero sólo `approveConvocation` con actor puede aprobar. La aprobación valida total exacto, mínimos, elegibilidad, pendientes, cambios manuales, excepciones de rotación y partido no cancelado antes de escribir.
+
+## ADR-014: Participacion No Crea Autoridad De Asistencia
+
+`PARTICIPACION_PARTIDO` almacena estadística y snapshot operativo, pero el estado de asistencia se toma de `ASISTENCIAS` asociada a la sesión de partido.
+
+## ADR-015: Comunicaciones Persistidas 1:N
+
+Cada tutor elegible recibe una comunicación independiente. `COMUNICACIONES.REFERENCIA_ID` es la relación canónica; `ASISTENCIAS.COMUNICACION_ID` es sólo resumen legacy.
+
+## ADR-016: Bitacora Append-Only Y Sanitizada
+
+La bitácora registra eventos autoritativos sin exponer correos, teléfonos, cuerpos completos ni detalles médicos. Sheets no promete ACID; si el append falla después del write principal se reporta reconciliación requerida.
+
+## ADR-017: Runtime Con Adapters Y Lock Inyectado
+
+El runtime de Apps Script se compone desde adapters explícitos, Script Properties y locks inyectados. Tests usan fakes y no ejecutan servicios externos reales.

@@ -43,3 +43,9 @@ Los snapshots `VALOR_APLICADO`, `VALOR_MAXIMO_APLICADO` y `LIMITE_JUSTIFICACION`
 La propuesta de convocatoria no consume FI, no actualiza rotación y no envía comunicaciones. Sólo una aprobación humana explícita persiste `APROBADA`, detalles finales y `ROTACION_DESPUES`.
 
 Los módulos en `src/` conservan compatibilidad directa con Apps Script V8: no dependen de `require`, `import` ni `export` en runtime productivo.
+
+## P10-P13 Operations
+
+`ParticipationService`, `CommunicationService`, `AuditService`, `SheetRepository`, `RuntimeComposition` y `TriggerHandlers` completan la capa operacional sin recursos productivos. La participación usa asistencia y convocatoria como autoridad; comunicaciones persiste mensajes 1:N por tutor; bitácora es append-only y sanitizada; `SheetRepository` mapea headers a objetos sin usar row numbers como identidad funcional.
+
+La composición runtime exige `spreadsheetId` desde environment adapter, acepta locks inyectados y construye handlers puros. Los triggers quedan definidos como funciones idempotentes, pero no se instalan en esta fase.
